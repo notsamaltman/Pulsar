@@ -1,25 +1,51 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { 
-  Rocket,
   LayoutGrid,
   Monitor,
   MoreHorizontal
 } from "lucide-react";
 import { CreateCompanyModal, AnimatedButton } from "@/components";
+import { LogoutButton } from "@/components/LogoutButton";
 
 export default function DashboardPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.push("/login");
+    }
+  }, [status, router]);
+
+  if (status === "loading") {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-black">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!session) return null;
+
+  const userInitials = session.user?.name
+    ?.split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase() || "PI";
 
   return (
     <div className="flex h-screen bg-[#000000] text-white overflow-hidden font-sans">
       {/* Sidebar */}
       <aside className="hidden md:flex flex-col w-64 border-r border-[#333333] bg-[#000000] px-3 py-4">
         {/* Logo Section */}
-        <div className="px-2 mb-10 mt-6 flex items-center gap-2">
-          <div className="w-6 h-6 flex items-center justify-center">
-            <Rocket className="w-5 h-5 text-white" />
+        <div className="px-2 mb-10 mt-6 flex items-center gap-3">
+          <div className="w-8 h-8 flex items-center justify-center overflow-hidden rounded-md bg-white/5 shadow-[0_0_10px_rgba(255,255,255,0.05)]">
+            <img src="/logo.png" className="w-full h-full object-cover" alt="Pulsar" />
           </div>
           <span className="text-sm font-bold tracking-widest uppercase">Pulsar</span>
         </div>
@@ -38,8 +64,14 @@ export default function DashboardPage() {
         <div className="mt-auto px-2 pt-4 border-t border-[#333333]">
           <div className="flex items-center justify-between p-2 hover:bg-[#111111] rounded-md transition-colors cursor-pointer group">
             <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold">AS</div>
-              <span className="text-xs font-medium">Alex Sterling</span>
+              <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold overflow-hidden">
+                {session.user?.image ? (
+                  <img src={session.user.image} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  userInitials
+                )}
+              </div>
+              <span className="text-xs font-medium truncate max-w-[120px]">{session.user?.name}</span>
             </div>
             <MoreHorizontal className="w-4 h-4 text-[#666666] group-hover:text-white" />
           </div>
@@ -52,10 +84,11 @@ export default function DashboardPage() {
         <div className="border-b border-[#333333] sticky top-0 bg-[#000000] z-20">
           <div className="px-8 h-14 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="text-[#888888] text-[13px]">Alex Sterling</span>
+              <span className="text-[#888888] text-[13px]">{session.user?.name}</span>
               <span className="text-[#333333]">/</span>
               <span className="text-white text-[13px] font-medium">Companies</span>
             </div>
+            <LogoutButton />
           </div>
         </div>
 

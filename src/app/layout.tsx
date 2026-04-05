@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Manrope, Geist } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
+import { Providers } from "@/components/Providers";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -18,6 +19,11 @@ const manrope = Manrope({
 export const metadata: Metadata = {
   title: "Pulsar | Self-Learning Sales Outreach",
   description: "Automate the complexity of outreach with an engine that learns. Pulsar transforms your pipeline through high-fidelity persona mapping and adaptive communication.",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({
@@ -30,8 +36,11 @@ export default function RootLayout({
       lang="en"
       className={cn("dark", "antialiased", inter.variable, manrope.variable, "font-sans", geist.variable)}
     >
+      <head>
+        <link rel="icon" href="/logo.png" sizes="any" />
+      </head>
       <body className="bg-background text-on-surface selection:bg-primary/30">
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

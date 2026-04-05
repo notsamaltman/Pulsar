@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Rocket } from "lucide-react";
+import { X } from "lucide-react";
 import { AnimatedButton } from "./Animations";
 
 interface CreateCompanyModalProps {
@@ -39,8 +39,10 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 <X className="w-5 h-5" />
               </button>
               
-              <div className="flex items-center gap-2 mb-2">
-                <Rocket className="w-4 h-4 text-white" />
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-5 h-5 flex items-center justify-center overflow-hidden rounded-sm bg-white/5">
+                  <img src="/favicon.ico" className="w-full h-full object-contain" alt="Pulsar" />
+                </div>
                 <span className="text-[10px] uppercase tracking-widest text-[#888888] font-bold">New Company</span>
               </div>
               <h2 className="text-2xl font-bold text-white tracking-tight">Create Company</h2>

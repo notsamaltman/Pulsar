@@ -40,6 +40,9 @@
   html {
     @apply font-sans;
   }
+  button {
+    cursor: pointer;
+  }
 }
 
 @layer utilities {
