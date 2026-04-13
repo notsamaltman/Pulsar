@@ -1,0 +1,26 @@
+services:
+  ml-service:
+    build: ml-service/.
+    container_name: ml-service
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./ml-service:/store
+    networks:
+      - pulsar-network
+
+  cache:
+    image: redis:alpine
+  web-app:
+    build: web-app/.
+    container_name: web-app
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./web-app:/app
+    networks:
+      - pulsar-network
+      
+networks:
+  pulsar-network:
+    driver: bridge
