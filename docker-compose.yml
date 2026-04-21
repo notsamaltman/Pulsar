@@ -8,9 +8,13 @@ services:
       - ./ml-service:/store
     networks:
       - pulsar-network
+    environment:
+      - REDIS_URL=redis://cache:6379
 
   cache:
     image: redis:alpine
+    ports:
+      - "6379:6379"
   web-app:
     build: web-app/.
     container_name: web-app

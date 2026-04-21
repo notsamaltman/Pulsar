@@ -1,0 +1,3 @@
+bullmq
+asyncio
+playwright

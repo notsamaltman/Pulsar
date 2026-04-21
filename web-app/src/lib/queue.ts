@@ -1,13 +1,38 @@
 // lib/queue.ts
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
-import { NextApiRequest, NextApiResponse } from 'next';
 
-const connection = new IORedis({ maxRetriesPerRequest: null });
+const connection = new IORedis({ 
+  maxRetriesPerRequest: null,
+  // Add environment variables for Redis if available
+  host: process.env.REDIS_HOST || 'localhost',
+  port: parseInt(process.env.REDIS_PORT || '6379'),
+});
 
-export default async function enqueue(req: NextApiRequest, res: NextApiResponse) {
-  const { data } = req.body;
-  const requestQueue = new Queue(`${data.jobType}-queue`, { connection });
-  const job = await requestQueue.add(`${data.jobId}-${data.jobType}-${Date.now()}`, { input: data });
-  res.status(200).json({ jobId: job.id });
+export interface Job {
+  jobId: string;
+  jobType: string;
+  jobBody: Record<string, unknown>;
 }
+
+/**
+ * Universal enqueue function to add jobs to specific queues based on jobType.
+ * @param job The job object containing jobId, jobType, and jobBody.
+ * @returns The added BullMQ job.
+ */
+export async function enqueue(job: Job) {
+  const { jobId, jobType, jobBody } = job;
+  const requestQueue = new Queue(`${jobType}-queue`, { connection });
+  
+  // Enqueue the job with a unique name and the body as data
+  const addedJob = await requestQueue.add(
+    `${jobId}-${jobType}-${Date.now()}`,
+    { ...jobBody, jobId, jobType }
+  );
+  
+  return addedJob;
+}
+
+// Keep a default export for backward compatibility if needed, 
+// but pointing to the new function.
+export default enqueue;
