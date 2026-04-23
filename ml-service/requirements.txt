@@ -1,3 +1,6 @@
 bullmq
 asyncio
 playwright
+langgraph
+google-generativeai
+python-dotenv

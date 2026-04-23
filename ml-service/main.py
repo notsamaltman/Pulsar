@@ -1,11 +1,15 @@
+import bullmq
 from bullmq import Worker
 import asyncio
 import signal
 import os
+import json
 
-async def process(job, job_token):
+async def company_profile_builder(job:bullmq.Job, job_token:str):
     # job.data will include the data added to the queue
-    return doSomethingAsync(job)
+    job.updateProgress()
+    print(f"recieved job {json.dumps(job.data, indent=2)} with id {job_token}")
+    
 
 async def main():
 
@@ -22,14 +26,14 @@ async def main():
 
     # Use REDIS_URL environment variable, defaulting to localhost for local development
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    worker = Worker("myQueue", process, {"connection": redis_url})
+    company_profile_worker = Worker("company_build-queue", company_profile_builder, {"connection": redis_url})
 
     # Wait until the shutdown event is set
     await shutdown_event.wait()
 
     # close the worker
     print("Cleaning up worker...")
-    await worker.close()
+    await company_profile_worker.close()
     print("Worker shut down successfully.")
 
 if __name__ == "__main__":
