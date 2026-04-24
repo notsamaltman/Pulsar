@@ -4,12 +4,24 @@ import asyncio
 import signal
 import os
 import json
+from agents.company_builder import CompanyBuilder
 
 async def company_profile_builder(job:bullmq.Job, job_token:str):
     # job.data will include the data added to the queue
-    job.updateProgress()
-    print(f"recieved job {json.dumps(job.data, indent=2)} with id {job_token}")
+    print(f"received job {json.dumps(job.data, indent=2)} with id {job.id}")
     
+    try:
+        builder = CompanyBuilder(job)
+        # Since CompanyBuilder.run is likely synchronous (invoking a graph), 
+        # and we are in an async function, we can run it in a thread or just call it if it's fast.
+        # However, langgraph might be async-friendly. 
+        # Let's check if we should await it or not. 
+        # The current implementation of run() is sync.
+        await builder.run()
+        print(f"Job {job.id} completed successfully")
+    except Exception as e:
+        print(f"Error processing job {job.id}: {str(e)}")
+        await job.updateProgress({"status": "failed", "message": f"Error: {str(e)}"})
 
 async def main():
 

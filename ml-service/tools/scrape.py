@@ -68,13 +68,13 @@ def run_scraper(url):
                 }
             """)
 
+            result = ""
             for data in scraped_data:
                 result += (data['text']+" ")
             return result
 
         except Exception as e:
             print(f"Error scraping {url}: {e}")
-            return []
+            return "Failed to scrape website."
         finally:
             browser.close()
-

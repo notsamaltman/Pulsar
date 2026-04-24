@@ -1,9 +1,11 @@
 from langgraph.graph import StateGraph, START, END
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, ConfigDict
+from typing import Optional, Dict, Any
 import bullmq
+from bullmq import Queue
 import sys
 import os
+import asyncio
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(parent_dir)
@@ -12,48 +14,66 @@ from tools.scrape import run_scraper
 from models.gemini import GeminiModel
 
 class CompanyState(BaseModel):
-    job:bullmq.Job
-    website_content:Optional[str] = None
-    summary:Optional[str] = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    job: bullmq.Job
+    website_content: Optional[str] = None
+    summary: Optional[str] = None
     
 class CompanyBuilder:
-    def __init__(self, job:bullmq.Job):
+    def __init__(self, job: bullmq.Job):
         self.job = job
-        job.updateProgress({"status": "initializing", "message": "Recieved Profile"})
         graph = StateGraph(CompanyState)
-        graph.add_node("route_company", route_company)
+        
+        # Add nodes
         graph.add_node("scrape_website", scrape_website)
         graph.add_node("generate_summary", generate_summary)
-        graph.add_edge(START, "route_company")
-        graph.add_edge("route_company", "scrape_website")
+        
+        # Define flow
+        # Start by deciding whether to scrape or generate summary
+        graph.add_conditional_edges(
+            START,
+            router,
+            {
+                "scrape": "scrape_website",
+                "generate": "generate_summary"
+            }
+        )
+        
         graph.add_edge("scrape_website", "generate_summary")
         graph.add_edge("generate_summary", END)
+        
         self.graph = graph.compile()
 
-    def run(self):
-        self.graph.invoke({"job": self.job})
+    async def run(self):
+        await self.job.updateProgress({"status": "initializing", "message": "Starting Build..."})
+        await self.graph.ainvoke({"job": self.job})
 
-def route_company(state:CompanyState):
-    if state.job.data["website"]:
-        return "scrape_website"
+def router(state: CompanyState) -> str:
+    """Router function to decide the next node."""
+    if state.job.data.get("website"):
+        return "scrape"
     else:
-        return "generate_summary"
+        return "generate"
 
-def scrape_website(state:CompanyState):
-    url = state.job.data["url"]
-    content = run_scraper(url)
-    state.job.updateProgress({"status": "scraping", "message": "Scraped Website"})
+async def scrape_website(state: CompanyState):
+    url = state.job.data.get("website")
+    if not url:
+        return {"website_content": "No website provided."}
+        
+    await state.job.updateProgress({"status": "scraping", "message": "Scraping Website..."})
+    
+    # run_scraper is likely sync, so we run it in a thread to keep things async
+    loop = asyncio.get_event_loop()
+    content = await loop.run_in_executor(None, run_scraper, url)
+    
+    await state.job.updateProgress({"status": "summarizing", "message": "Website Scraped"})
     return {"website_content": content}
 
-def generate_summary(state: CompanyState):
-    """
-    Generates a summary for the company based on scraped website content.
-    Returns 'INVALID_CONTENT' if the content is not representative of a professional entity.
-    """
+async def generate_summary(state: CompanyState):
     model = GeminiModel()
     
     company_name = state.job.data.get("name", "Unknown Company")
-    website_url = state.job.data.get("url", "No URL provided")
+    website_url = state.job.data.get("website", "No URL provided")
     scraped_content = state.website_content or "No content scraped."
     
     prompt = f"""
@@ -72,20 +92,35 @@ def generate_summary(state: CompanyState):
     3. Do not include any preamble or self-references. Just return the summary or 'INVALID_CONTENT'.
     """
     
-    state.job.updateProgress({"status": "summarizing", "message": "Analyzing Content"})
+    await state.job.updateProgress({"status": "summarizing", "message": "Analyzing Content..."})
     
     try:
-        summary = model.run(prompt)
-        # Clean up the response just in case
+        # model.run might be sync
+        loop = asyncio.get_event_loop()
+        summary = await loop.run_in_executor(None, model.run, prompt)
         summary = summary.strip()
         
         if "INVALID_CONTENT" in summary:
             summary = "INVALID_CONTENT"
             
-        state.job.updateProgress({"status": "completed", "message": "Summary Generated" if summary != "INVALID_CONTENT" else "Content Invalidated"})
+        final_status = "completed" if summary != "INVALID_CONTENT" else "failed"
+        final_msg = "Summary Generated" if summary != "INVALID_CONTENT" else "Content Invalidated"
+        
+        await state.job.updateProgress({
+            "status": final_status, 
+            "message": final_msg,
+            "result": {
+                "summary": summary,
+                "name": company_name,
+                "website": website_url,
+                "description": state.job.data.get("description")
+            }
+        })
         return {"summary": summary}
     except Exception as e:
-        state.job.updateProgress({"status": "failed", "message": f"Summary failed: {str(e)}"})
-        return {"summary": "Error generating summary."}
+        await state.job.updateProgress({"status": "failed", "message": f"Summary failed: {str(e)}"})
+        return {"summary": f"Error: {str(e)}"}
 
-
+async def publish_result(state: CompanyState):
+    result = Queue("company_builder-queue-result")
+    await result.add(state)

@@ -1,8 +1,8 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
-import { useState } from "react";
+import { X, Check, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
 import { AnimatedButton } from "./Animations";
 
 interface CreateCompanyModalProps {
@@ -12,15 +12,62 @@ interface CreateCompanyModalProps {
 
 export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyModalProps) {
   const [loading, setLoading] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ status: string; message: string } | null>(null);
+  const [showResultForm, setShowResultForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
   const [formData, setFormData] = useState({
     name: "",
     website: "",
     description: ""
   });
 
+  const [resultData, setResultData] = useState({
+    name: "",
+    website: "",
+    description: "",
+    summary: ""
+  });
+
+  // Polling effect
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+
+    if (jobId && loading && !showResultForm) {
+      interval = setInterval(async () => {
+        try {
+          const response = await fetch(`/api/job/${jobId}`);
+          if (response.ok) {
+            const job = await response.json();
+            
+            if (job.progress) {
+              setProgress(job.progress);
+              
+              if (job.progress.status === "completed" && job.progress.result) {
+                setResultData(job.progress.result);
+                setShowResultForm(true);
+                clearInterval(interval);
+              } else if (job.progress.status === "failed") {
+                alert(job.progress.message || "Job failed");
+                setLoading(false);
+                clearInterval(interval);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Polling error:", error);
+        }
+      }, 2000);
+    }
+
+    return () => clearInterval(interval);
+  }, [jobId, loading, showResultForm]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setProgress({ status: "initializing", message: "Queuing Request..." });
 
     try {
       const response = await fetch("/api/job/company", {
@@ -33,29 +80,54 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
         throw new Error("Failed to create company");
       }
 
-      // Success - Commenting out to keep loading animation visible
-      // setFormData({ name: "", website: "", description: "" });
-      // onClose();
+      const data = await response.json();
+      setJobId(data.jobId);
     } catch (error) {
       console.error("Error:", error);
       alert("Failed to create company. Please try again.");
-      setLoading(false); // Only stop loading on error so they can fix it
+      setLoading(false);
+    }
+  };
+
+  const handleFinalSave = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(resultData),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save company");
+      }
+
+      // Reset and close
+      setFormData({ name: "", website: "", description: "" });
+      setJobId(null);
+      setProgress(null);
+      setShowResultForm(false);
+      setLoading(false);
+      onClose();
+    } catch (error) {
+      console.error("Error saving company:", error);
+      alert("Failed to save. Please try again.");
     } finally {
-      // setLoading(false); // Commented out to keep animation infinite
+      setSaving(false);
     }
   };
 
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-100 flex items-center justify-center p-6">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           {/* Overlay */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={!loading ? onClose : undefined}
-            className="absolute inset-0 bg-background/60 backdrop-blur-sm"
+            className="absolute inset-0 bg-background/80 backdrop-blur-md"
           />
 
           {/* Modal Container */}
@@ -63,32 +135,119 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            className="w-full max-w-xl bg-[#000000] rounded-xl border border-[#333333] overflow-hidden flex flex-col shadow-2xl relative z-10"
+            className="w-full max-w-2xl bg-[#171717] rounded-2xl border border-[#2A2A2A] overflow-hidden flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.5)] relative z-10"
           >
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-32 px-10 text-center space-y-10">
-                <div className="relative flex items-center justify-center scale-125">
+            {loading && !showResultForm ? (
+              <div className="flex flex-col items-center justify-center py-32 px-10 text-center space-y-12">
+                <div className="relative flex items-center justify-center scale-150">
                   <motion.div
                     animate={{ rotate: 360 }}
-                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                    className="w-24 h-24 border-t-2 border-r-2 border-white/20 rounded-full"
+                    transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                    className="w-24 h-24 border-t-2 border-[#BC66FF]/20 rounded-full"
                   />
                   <motion.div
                     animate={{ rotate: -360 }}
-                    transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                    className="absolute w-16 h-16 border-b-2 border-l-2 border-white/40 rounded-full"
+                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                    className="absolute w-16 h-16 border-b-2 border-[#BC66FF]/40 rounded-full"
                   />
                   <motion.div
-                    animate={{ scale: [1, 1.4, 1] }}
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
                     transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute w-6 h-6 bg-white rounded-full shadow-[0_0_20px_rgba(255,255,255,0.6)]"
+                    className="absolute w-8 h-8 bg-[#BC66FF]/20 rounded-full blur-sm"
                   />
+                  <div className="absolute w-4 h-4 bg-[#BC66FF] rounded-full shadow-[0_0_15px_rgba(188,102,255,0.8)]" />
                 </div>
-                <div className="space-y-4">
-                  <h3 className="text-3xl font-bold text-white tracking-tight">Creating Personalised Profile</h3>
-                  <p className="text-[#888888] text-base max-w-[450px] leading-relaxed mx-auto">
-                    Pulsar is processing your information to build a personalised profile.
+                
+                <div className="space-y-8">
+                  <div className="flex flex-col items-center gap-4">
+                    <h3 className="text-2xl font-bold text-white tracking-tight">Building Profile</h3>
+                    <div className="h-1.5 w-48 bg-white/10 rounded-full overflow-hidden">
+                      <motion.div 
+                        className="h-full bg-[#BC66FF]"
+                        initial={{ width: "0%" }}
+                        animate={{ width: "100%" }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <p className="text-white text-2xl font-black uppercase tracking-[0.3em] animate-pulse">
+                      {progress?.message || "Please wait..."}
+                    </p>
+                    <p className="text-[#666666] text-sm max-w-sm mx-auto leading-relaxed">
+                      Pulsar is analyzing {formData.name}&apos;s digital footprint to craft a high-performance profile.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : showResultForm ? (
+              <div className="flex flex-col h-full max-h-[85vh]">
+                {/* Result Header */}
+                <div className="px-8 pt-8 pb-3 border-b border-[#2A2A2A] flex justify-between items-start">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#555555]">Build Complete</span>
+                    </div>
+                    <h2 className="text-2xl font-bold text-white tracking-tight">Review & Edit</h2>
+                  </div>
+                  <button onClick={onClose} className="text-[#444444] hover:text-white transition-colors">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Result Form */}
+                <div className="px-8 py-8 space-y-8 overflow-y-auto min-h-[400px]">
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Name</label>
+                      <input 
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors" 
+                        value={resultData.name}
+                        onChange={(e) => setResultData({ ...resultData, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Website</label>
+                      <input 
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors" 
+                        value={resultData.website}
+                        onChange={(e) => setResultData({ ...resultData, website: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Generated Summary</label>
+                    <textarea 
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors min-h-[260px] leading-relaxed resize-none" 
+                      value={resultData.summary}
+                      onChange={(e) => setResultData({ ...resultData, summary: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                {/* Result Actions */}
+                <div className="px-8 py-6 bg-[#131313] border-t border-[#2A2A2A] flex items-center justify-between">
+                  <p className="text-[11px] text-[#444444] max-w-[240px]">
+                    You can refine the AI-generated summary before finalizing the company record.
                   </p>
+                  <div className="flex gap-4">
+                    <button 
+                      onClick={() => setShowResultForm(false)}
+                      className="text-xs font-bold text-[#666666] hover:text-white transition-colors uppercase tracking-wider"
+                    >
+                      Back
+                    </button>
+                    <button 
+                      disabled={saving}
+                      onClick={handleFinalSave}
+                      className="bg-white text-black px-8 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                      {saving ? "Saving..." : "Confirm & Save"}
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -97,59 +256,58 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 <div className="px-8 pt-10 pb-6 relative">
                   <button 
                     onClick={onClose}
-                    className="absolute top-6 right-6 text-[#666666] hover:text-white transition-colors"
+                    className="absolute top-8 right-8 text-[#444444] hover:text-white transition-colors"
                   >
                     <X className="w-5 h-5" />
                   </button>
                   
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-5 h-5 flex items-center justify-center overflow-hidden rounded-sm bg-white/5">
-                      <img src="/favicon.ico" className="w-full h-full object-contain" alt="Pulsar" />
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-6 h-6 flex items-center justify-center overflow-hidden rounded bg-white/10 ring-1 ring-white/20">
+                      <img src="/favicon.ico" className="w-4 h-4 object-contain brightness-0 invert" alt="Pulsar" />
                     </div>
-                    <span className="text-[10px] uppercase tracking-widest text-[#888888] font-bold">New Company</span>
+                    <span className="text-[10px] uppercase tracking-[0.25em] text-[#555555] font-bold">New Entity</span>
                   </div>
-                  <h2 className="text-2xl font-bold text-white tracking-tight">Create Company</h2>
-                  <p className="text-[#888888] text-[13px] mt-2 leading-relaxed max-w-md">
-                    Pulsar will create your personalised company profile.
+                  <h2 className="text-3xl font-bold text-white tracking-tight">Register Company</h2>
+                  <p className="text-[#666666] text-[13px] mt-2 leading-relaxed max-w-sm">
+                    Initiate Pulsar&apos;s intelligent analysis to build your company profile.
                   </p>
                 </div>
 
                 {/* Form Section */}
                 <form className="px-8 pb-10 space-y-6" onSubmit={handleSubmit}>
-                  {/* Field: Company Name */}
-                  <div className="space-y-2">
-                    <label className="text-[11px] font-medium text-[#888888] uppercase">Company Name</label>
-                    <input 
-                      className="w-full bg-[#111111] border border-[#333333] rounded-md px-4 py-2.5 text-sm text-white placeholder-[#444444] focus:outline-none focus:border-[#666666] transition-colors" 
-                      placeholder="e.g. Acme Corp" 
-                      type="text" 
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  {/* Field: Website URL */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[11px] font-medium text-[#888888] uppercase">Website URL</label>
-                      <span className="text-[10px] text-[#444444] uppercase font-bold">Optional</span>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Company Name</label>
+                      <input 
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white placeholder-[#333333] focus:outline-none focus:border-[#444444] transition-colors" 
+                        placeholder="Acme Corporation" 
+                        type="text" 
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        required
+                      />
                     </div>
-                    <input 
-                      className="w-full bg-[#111111] border border-[#333333] rounded-md px-4 py-2.5 text-sm text-white placeholder-[#444444] focus:outline-none focus:border-[#666666] transition-colors" 
-                      placeholder="https://acme.com" 
-                      type="url"
-                      value={formData.website}
-                      onChange={(e) => setFormData({ ...formData, website: e.target.value })}
-                    />
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Website URL</label>
+                        <span className="text-[9px] text-[#222222] uppercase font-black">Optional</span>
+                      </div>
+                      <input 
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white placeholder-https:// focus:outline-none focus:border-[#444444] transition-colors" 
+                        placeholder="https://acme.com" 
+                        type="url"
+                        value={formData.website}
+                        onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                      />
+                    </div>
                   </div>
 
-                  {/* Field: What do you sell? (Textarea) */}
                   <div className="space-y-2">
-                    <label className="text-[11px] font-medium text-[#888888] uppercase">What do you sell?</label>
+                    <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Company Description</label>
                     <textarea 
-                      className="w-full bg-[#111111] border border-[#333333] rounded-md px-4 py-3 text-sm text-white placeholder-[#444444] focus:outline-none focus:border-[#666666] transition-colors min-h-[120px] resize-none" 
-                      placeholder="Describe your product or service in detail..." 
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-4 text-sm text-white placeholder-Describe... focus:outline-none focus:border-[#444444] transition-colors min-h-[140px] resize-none leading-relaxed" 
+                      placeholder="What is the core focus of your business?" 
                       value={formData.description}
                       onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                       required
@@ -157,19 +315,19 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                   </div>
 
                   {/* Actions */}
-                  <div className="pt-6 flex items-center justify-end gap-4">
+                  <div className="pt-6 flex items-center justify-end gap-6">
                     <button 
                       type="button"
                       onClick={onClose}
-                      className="text-[13px] font-medium text-[#888888] hover:text-white transition-colors"
+                      className="text-[12px] font-bold text-[#444444] hover:text-white transition-colors uppercase tracking-widest"
                     >
                       Cancel
                     </button>
                     <AnimatedButton 
                       type="submit"
-                      className="h-10 px-8 rounded-md text-sm font-medium bg-white text-black hover:bg-[#e0e0e0] border-0"
+                      className="h-12 px-10 rounded-full text-xs font-black uppercase tracking-[0.2em] bg-white text-black hover:bg-[#eeeeee] border-0 shadow-lg shadow-white/5 transition-all"
                     >
-                      <span>Create Company</span>
+                      <span>Initialize Build</span>
                     </AnimatedButton>
                   </div>
                 </form>

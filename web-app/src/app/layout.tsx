@@ -3,6 +3,7 @@ import { Inter, Manrope, Geist } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Providers } from "@/components/Providers";
+import { AuthGuard } from "@/components/AuthGuard";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -40,7 +41,11 @@ export default function RootLayout({
         <link rel="icon" href="/logo.png" sizes="any" />
       </head>
       <body className="bg-background text-on-surface selection:bg-primary/30">
-        <Providers>{children}</Providers>
+        <Providers>
+          <AuthGuard>
+            {children}
+          </AuthGuard>
+        </Providers>
       </body>
     </html>
   );
