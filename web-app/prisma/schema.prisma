@@ -15,30 +15,32 @@ model User {
   name          String?
   email         String?   @unique
   emailVerified DateTime?
-  image         String?   // This can store the S3 profile picture link
+  image         String? // This can store the S3 profile picture link
   accounts      Account[]
   sessions      Session[]
-  
+
   // Custom metadata fields
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaigns Campaign[]
 
   @@map("users")
 }
 
 model Account {
-  id                 String  @id @default(cuid())
-  userId             String
-  type               String
-  provider           String
-  providerAccountId  String
-  refresh_token      String? @db.Text
-  access_token       String? @db.Text
-  expires_at         Int?
-  token_type         String?
-  scope              String?
-  id_token           String? @db.Text
-  session_state      String?
+  id                       String  @id @default(cuid())
+  userId                   String
+  type                     String
+  provider                 String
+  providerAccountId        String
+  refresh_token            String? @db.Text
+  access_token             String? @db.Text
+  expires_at               Int?
+  token_type               String?
+  scope                    String?
+  id_token                 String? @db.Text
+  session_state            String?
   refresh_token_expires_in Int?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -76,5 +78,46 @@ model Company {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  campaigns Campaign[]
+
   @@map("companies")
+}
+
+model Campaign {
+  id String @id @default(cuid())
+
+  // Campaign Basics
+  name      String
+  goalType  String
+  industry  String
+  geoTarget String
+  budget    String
+
+  // Audience
+  targetProfile String
+  focus         String
+  minFollowers  String?
+  exclusions    String?
+
+  // Intent
+  b2bSignals    String[]
+  minEngagement String?
+  contentType   String?
+
+  // Outreach
+  channels String[]
+  tone     String
+  sequence String
+
+  // Relations
+  companyId String?
+  userId    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("campaigns")
 }

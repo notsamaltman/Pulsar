@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, website, description, summary, userId } = await req.json();
+    const session = await getServerSession(authOptions);
+    
+    // @ts-expect-error session.user is slightly typed differently in nextauth
+    const userId = session?.user?.id;
+
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { name, website, description, summary } = await req.json();
 
     if (!name || !description) {
       return NextResponse.json(
@@ -42,6 +53,7 @@ export async function GET() {
     });
     return NextResponse.json(companies);
   } catch (error) {
+    console.error("Error fetching companies:", error);
     return NextResponse.json(
       { error: "Failed to fetch companies" },
       { status: 500 }

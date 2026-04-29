@@ -19,6 +19,8 @@ import {
 import { LogoutButton } from "@/components/LogoutButton";
 import { Company } from "@prisma/client";
 
+import CreateCampaignModal from "@/components/CreateCampaignModal";
+
 export default function CompanyDashboardPage({ params }: { params: Promise<{ username: string; companySlug: string }> }) {
   const resolvedParams = use(params);
   const { data: session, status } = useSession();
@@ -27,6 +29,7 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
   const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isCampaignModalOpen, setIsCampaignModalOpen] = useState(false);
 
   // Form state for settings
   const [editData, setEditData] = useState({
@@ -144,7 +147,10 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
                   </div>
                </div>
                {activeTab === "campaigns" && (
-                 <button className="bg-white text-black px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center gap-1.5 grayscale hover:grayscale-0">
+                 <button 
+                   onClick={() => setIsCampaignModalOpen(true)}
+                   className="bg-white text-black px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center gap-1.5 grayscale hover:grayscale-0"
+                 >
                    <Plus className="w-3 h-3" />
                    New Campaign
                  </button>
@@ -224,6 +230,12 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
             )}
           </div>
         </div>
+        
+        <CreateCampaignModal 
+          isOpen={isCampaignModalOpen}
+          onClose={() => setIsCampaignModalOpen(false)}
+          companyId={company.id}
+        />
       </main>
     </div>
   );
