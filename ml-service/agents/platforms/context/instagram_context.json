@@ -1,0 +1,35 @@
+{
+  "platform": "instagram",
+  "selectors": {
+    "login": {
+      "username_input": "input[name='email'], input[name='username'], input[autocomplete='username']",
+      "password_input": "input[name='pass'], input[name='password']",
+      "login_button": "div[role='button'][aria-label='Log in'], div[role='button'][aria-label='Log In'], button[type='submit']"
+    },
+    "security": {
+      "code_input": "input[name='email']",
+      "continue_button": "div[role='button']:has-text('Continue')"
+    },
+    "navigation": {
+      "search_button": "svg[aria-label='Search']",
+      "search_input": "input[aria-label='Search input']",
+      "search_results_item": "a[href^='/']"
+    },
+    "feed": {
+      "post_article": "article",
+      "reel_video": "a[href*='/reel/']",
+      "creator_link": "article a[href^='/']"
+    },
+    "post_details": {
+      "creator_name": "header a[href^='/']",
+      "likes_count": "a[href*='/liked_by/'] span",
+      "comments_count": "span:has-text('comments')",
+      "view_all_comments": "span:has-text('View all')",
+      "follow_button": "button:has-text('Follow'), div[role='button']:has-text('Follow')"
+    }
+  },
+  "notes": {
+    "stability": "Selectors prioritize stable attributes like name, aria-label, and role over dynamic CSS classes.",
+    "framework_compatibility": "Optimized for Playwright (supports :has-text selectors), but largely standard CSS."
+  }
+}
