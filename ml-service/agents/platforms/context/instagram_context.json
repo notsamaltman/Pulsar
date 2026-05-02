@@ -7,25 +7,44 @@
       "login_button": "div[role='button'][aria-label='Log in'], div[role='button'][aria-label='Log In'], button[type='submit']"
     },
     "security": {
-      "code_input": "input[name='email']",
-      "continue_button": "div[role='button']:has-text('Continue')"
+      "code_input": "input[name='email_confirm_code'], input[name='verificationCode'], input[aria-label*='Security Code'], input[name='email']",
+      "continue_button": "div[role='button']:has-text('Continue'), button:has-text('Continue')"
     },
     "navigation": {
-      "search_button": "svg[aria-label='Search']",
-      "search_input": "input[aria-label='Search input']",
-      "search_results_item": "a[href^='/']"
+      "search_button": "nav a[role='link']:has(svg[aria-label='Search']), a[role='link']:has(svg[aria-label='Search'])",
+      "search_input": "input[aria-label='Search input'], input[placeholder='Search']",
+      "search_results_container": "div:has(> div > a[role='link'][href^='/']):not(nav)",
+      "search_results_item": "a[role='link'][href^='/']:has(span)",
+      "post_link_from_profile": "a[role='link'][href*='/p/'], a[role='link'][href*='/reel/']"
     },
-    "feed": {
-      "post_article": "article",
-      "reel_video": "a[href*='/reel/']",
-      "creator_link": "article a[href^='/']"
+    "profile": {
+      "username_header": "header h2",
+      "post_count": "header ul li:nth-child(1) span, span:has-text('posts')",
+      "follower_count": "header a[href*='/followers/'] span, span:has-text('followers')",
+      "following_count": "header a[href*='/following/'] span, span:has-text('following')",
+      "bio_text": "header section div[dir='auto'], header span[dir='auto']",
+      "message_button": "div[role='button']:has-text('Message'), a[role='link']:has-text('Message')",
+      "follow_button": "button:has-text('Follow'), div[role='button']:has-text('Follow')",
+      "more_options": "svg[aria-label='Options']"
+    },
+    "messaging": {
+      "input_box": "div[role='textbox'][aria-label='Message'], div[aria-placeholder='Message...']",
+      "send_button": "button:has-text('Send')"
     },
     "post_details": {
-      "creator_name": "header a[href^='/']",
-      "likes_count": "a[href*='/liked_by/'] span",
+      "creator_name": "header a[role='link'][href^='/']:not([href*='/p/']):not([href*='/reels/'])",
+      "caption": "h1[dir='auto'], div[dir='auto']:has(> span)",
+      "likes_count": "a[href*='/liked_by/'] span, span:has-text('likes')",
+      "posted_time": "time[datetime]",
       "comments_count": "span:has-text('comments')",
       "view_all_comments": "span:has-text('View all')",
-      "follow_button": "button:has-text('Follow'), div[role='button']:has-text('Follow')"
+      "reel_indicator": "svg[aria-label='Reel'], svg[aria-label='Clip']"
+    },
+    "interstitials": {
+      "save_info_page": "main:has-text('Save your login info?')",
+      "save_info_not_now": "button:has-text('Not now'), div[role='button']:has-text('Not now')",
+      "notifications_page": "span:has-text('Turn on Notifications')",
+      "notifications_not_now": "button:has-text('Not Now'), div[role='button']:has-text('Not Now')"
     }
   },
   "notes": {
