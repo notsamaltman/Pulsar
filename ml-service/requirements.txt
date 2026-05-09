@@ -4,3 +4,4 @@ playwright
 langgraph
 google-generativeai
 python-dotenv
+deepagents

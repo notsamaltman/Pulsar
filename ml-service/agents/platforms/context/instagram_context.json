@@ -14,7 +14,7 @@
       "search_button": "nav a[role='link']:has(svg[aria-label='Search']), a[role='link']:has(svg[aria-label='Search'])",
       "search_input": "input[aria-label='Search input'], input[placeholder='Search']",
       "search_results_container": "div:has(> div > a[role='link'][href^='/']):not(nav)",
-      "search_results_item": "a[role='link'][href^='/']:has(span)",
+      "search_results_item": "a[href*='/p/'], a[href*='/reel/']",
       "post_link_from_profile": "a[role='link'][href*='/p/'], a[role='link'][href*='/reel/']"
     },
     "profile": {
