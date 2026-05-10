@@ -5,16 +5,117 @@ import os
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-from playwright.sync_api import BrowserContext, sync_playwright
 from deepagents import create_deep_agent
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Set
 import sys
+import threading
+import json
+import os
+from pydantic import BaseModel, Field
+from langgraph.checkpoint.sqlite import SqliteSaver
+import sqlite3
 
-# --- Global Storage for Intercepted Data ---
+# --- Global Storage for Intercepted Data & Persistence ---
 INTERCEPTED_DATA = []
+STAGED_LEADS = []
+SEARCHED_USERNAMES: Set[str] = set()
+
+LEADS_FILE = "staged_leads.json"
+HISTORY_FILE = "searched_usernames.json"
+CHECKPOINT_DB = "agent_state.sqlite"
+
 page = None
 browser_context = None
 playwright_instance = None
+
+_thread_local = threading.local()
+_main_thread_id = None
+BROWSER_LOCK = threading.Lock()
+
+def save_persistence():
+    """Saves current state to JSON files."""
+    try:
+        with open(LEADS_FILE, "w") as f:
+            json.dump(STAGED_LEADS, f, indent=4)
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(list(SEARCHED_USERNAMES), f, indent=4)
+    except Exception as e:
+        print(f"[-] Persistence save failed: {e}")
+
+def load_persistence():
+    """Loads state from JSON files if they exist."""
+    global STAGED_LEADS, SEARCHED_USERNAMES
+    if os.path.exists(LEADS_FILE):
+        try:
+            with open(LEADS_FILE, "r") as f:
+                STAGED_LEADS = json.load(f)
+                print(f"[+] Loaded {len(STAGED_LEADS)} existing leads from disk.")
+        except: pass
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r") as f:
+                SEARCHED_USERNAMES = set(json.load(f))
+                print(f"[+] Loaded {len(SEARCHED_USERNAMES)} searched usernames from disk.")
+        except: pass
+
+def _get_page():
+    """Returns a thread-safe page object. Uses CDP connection if in a child thread."""
+    global page, _main_thread_id
+    
+    # Check thread-local storage first
+    if hasattr(_thread_local, "page") and _thread_local.page:
+        try:
+            _thread_local.page.url
+            return _thread_local.page
+        except:
+            pass
+
+    # Main thread can use the global handle
+    if threading.get_ident() == _main_thread_id:
+        if page:
+            try:
+                page.url
+                _thread_local.page = page
+                return page
+            except:
+                pass
+
+    # All other threads (or main thread if global is missing) connect via CDP
+    try:
+        from playwright.sync_api import sync_playwright
+        if not hasattr(_thread_local, "playwright"):
+            # Start a separate playwright instance for this thread
+            _thread_local.playwright = sync_playwright().start()
+        
+        # Connect to the browser started in launch_browser (port 9222)
+        # Using a small timeout for the connection
+        browser = _thread_local.playwright.chromium.connect_over_cdp("http://localhost:9222", timeout=10000)
+        _thread_local.browser = browser
+        
+        if browser.contexts:
+            ctx = browser.contexts[0]
+            if ctx.pages:
+                _thread_local.page = ctx.pages[0]
+            else:
+                _thread_local.page = ctx.new_page()
+        else:
+            ctx = browser.new_context()
+            _thread_local.page = ctx.new_page()
+            
+        return _thread_local.page
+    except Exception as e:
+        print(f"[-] Thread {threading.get_ident()} failed to connect via CDP: {e}")
+        # If we are in main thread, maybe we haven't set _main_thread_id yet
+        if page: return page
+        raise e
+
+def _get_context():
+    """Returns a thread-safe browser context."""
+    global browser_context
+    if hasattr(_thread_local, "context") and _thread_local.context:
+        return _thread_local.context
+    _get_page()
+    return getattr(_thread_local, "context", browser_context)
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(parent_dir)
@@ -66,9 +167,91 @@ def parse_xdt_media(items: List[Dict[Any, Any]]):
             continue
     return extracted
 
-def recursive_find_media(data, found_items):
-    """Recursively searches for XDTMediaDict or items that look like media."""
+    return extracted
+
+class Lead(BaseModel):
+    """Pydantic model for validating lead data."""
+    username: str = Field(..., description="The creator's handle.")
+    creator_info: str = Field(..., description="Short description of who they are and what they do.")
+    reasoning: str = Field(..., description="Detailed reasoning why they match the ICP and product.")
+    posts: List[Dict[str, Any]] = Field(..., description="Array of recent posts with url and media_url.")
+    found: bool = Field(True, description="Whether the profile was successfully analyzed.")
+
+def push_leads(leads: List[Dict[str, Any]]):
+    """
+    Pushes a list of analyzed leads to the global staging area.
+    This should be called after you have investigated profiles using search_profile()
+    and verified that they match the ICP.
+    
+    Args:
+        leads (List[Dict]): A list of lead objects matching the Lead schema.
+    """
+    global STAGED_LEADS
+    count = 0
+    for lead_data in leads:
+        try:
+            # Validate using Pydantic
+            lead = Lead(**lead_data)
+            # Avoid duplicates in staged leads
+            if not any(l['username'] == lead.username for l in STAGED_LEADS):
+                STAGED_LEADS.append(lead.model_dump())
+                print(f"[+] Lead @{lead.username} pushed to staged leads.")
+                count += 1
+        except Exception as e:
+            print(f"[-] Failed to validate lead data for @{lead_data.get('username', 'unknown')}: {e}")
+    
+    if count > 0:
+        save_persistence()
+    
+    return f"Successfully pushed {count} leads."
+
+def parse_xdt_user(data: Dict[Any, Any]):
+    """Parses user/profile information from Instagram's response."""
+    try:
+        # Check standard XDT/GraphQL patterns
+        user = data.get("user") or data
+        
+        # If it's a GraphQL user object (with edges)
+        follower_count = user.get("follower_count")
+        if follower_count is None:
+            follower_count = user.get("edge_followed_by", {}).get("count")
+            
+        following_count = user.get("following_count")
+        if following_count is None:
+            following_count = user.get("edge_follow", {}).get("count")
+            
+        post_count = user.get("media_count")
+        if post_count is None:
+            post_count = user.get("edge_owner_to_timeline_media", {}).get("count")
+            
+        return {
+            "type": "profile",
+            "username": user.get("username"),
+            "full_name": user.get("full_name"),
+            "followers": follower_count,
+            "following": following_count,
+            "posts": post_count,
+            "is_private": user.get("is_private"),
+            "is_verified": user.get("is_verified"),
+            "biography": user.get("biography"),
+            "external_url": user.get("external_url"),
+            "id": user.get("pk") or user.get("id")
+        }
+    except Exception as e:
+        print(f"[-] Error parsing user item: {e}")
+        return None
+
+def recursive_find_media(data, found_items, found_users=None):
+    """Recursively searches for XDTMediaDict or items that look like media/users."""
+    if found_users is None:
+        found_users = []
+        
     if isinstance(data, dict):
+        # Check if this dict is a user profile
+        if data.get("__typename") == "User" or (data.get("pk") and data.get("username") and "follower_count" in data):
+            found_users.append(data)
+            # We don't necessarily return early here because users can contain media items
+
         # Check if this dict itself is a media item
         if data.get("__typename") == "XDTMediaDict" or (data.get("pk") and data.get("code") and "user" in data):
             found_items.append(data)
@@ -77,7 +260,7 @@ def recursive_find_media(data, found_items):
         # Check for "items" or "edges"
         if "items" in data and isinstance(data["items"], list):
             for item in data["items"]:
-                recursive_find_media(item, found_items)
+                recursive_find_media(item, found_items, found_users)
         if "edges" in data and isinstance(data["edges"], list):
             for edge in data["edges"]:
                 node = edge.get("node")
@@ -86,6 +269,7 @@ def recursive_find_media(data, found_items):
                     if node.get("__typename") == "GraphImage" or node.get("__typename") == "GraphVideo" or node.get("__typename") == "GraphSidecar":
                         # Convert node to a common format or just store it
                         INTERCEPTED_DATA.append({
+                            "type": "post",
                             "id": node.get("id"),
                             "shortcode": node.get("shortcode"),
                             "url": f"https://www.instagram.com/p/{node.get('shortcode')}/",
@@ -97,16 +281,19 @@ def recursive_find_media(data, found_items):
                             "timestamp": node.get("taken_at_timestamp")
                         })
                     else:
-                        recursive_find_media(node, found_items)
+                        recursive_find_media(node, found_items, found_users)
         
         # Recurse into all values
-        for value in data.values():
+        for key, value in data.items():
             if isinstance(value, (dict, list)):
-                recursive_find_media(value, found_items)
+                # If we're entering a user object, we might want to capture it
+                if key == "user" and isinstance(value, dict):
+                    found_users.append(value)
+                recursive_find_media(value, found_items, found_users)
                 
     elif isinstance(data, list):
         for item in data:
-            recursive_find_media(item, found_items)
+            recursive_find_media(item, found_items, found_users)
 
 def handle_response(response):
     if response.status == 200:
@@ -116,24 +303,57 @@ def handle_response(response):
             return
 
         try:
+            # Check if this is a GraphQL response that might contain profile info
+            is_profile_query = False
+            try:
+                post_data = response.request.post_data
+                if post_data and "web_profile_info" in post_data:
+                    is_profile_query = True
+            except:
+                pass
+
             # Try to parse as JSON regardless of content-type for robustness
             data = response.json()
-            
+
+            # Specific check for web_profile_info as suggested by user
+            if is_profile_query:
+                user_data = data.get("data", {}).get("user")
+                if user_data:
+                    parsed_user = parse_xdt_user(user_data)
+                    if parsed_user and parsed_user.get("username"):
+                        if not any(d.get("type") == "profile" and d.get("username") == parsed_user["username"] for d in INTERCEPTED_DATA):
+                            print(f"[+] Intercepted profile info for {parsed_user['username']} via web_profile_info...")
+                            INTERCEPTED_DATA.append(parsed_user)
+                            # Do NOT return here, we want to extract posts too
+
             found_xdt_items = []
-            recursive_find_media(data, found_xdt_items)
+            found_users = []
+            recursive_find_media(data, found_xdt_items, found_users)
             
+            if found_users:
+                for user_data in found_users:
+                    parsed_user = parse_xdt_user(user_data)
+                    if parsed_user and parsed_user.get("username"):
+                        # Check if we already have this user
+                        if not any(d.get("type") == "profile" and d.get("username") == parsed_user["username"] for d in INTERCEPTED_DATA):
+                            print(f"[+] Intercepted profile info for {parsed_user['username']}...")
+                            INTERCEPTED_DATA.append(parsed_user)
+
             if found_xdt_items:
                 parsed = parse_xdt_media(found_xdt_items)
                 if parsed:
                     print(f"[+] Intercepted {len(parsed)} posts via recursive search...")
+                    for p in parsed:
+                        p["type"] = "post"
                     INTERCEPTED_DATA.extend(parsed)
 
-        except:
+        except Exception as e:
+            # print(f"Error in handle_response: {e}")
             pass
 
 def human_type(selector, text):
     """Types text like a human with random delays between keystrokes."""
-    global page
+    page = _get_page()
     page.click(selector)
     for char in text:
         page.keyboard.type(char, delay=random.randint(50, 150))
@@ -142,8 +362,8 @@ def human_type(selector, text):
 
 def save_session(username):
     """Saves the current browser state (cookies, local storage) and metadata."""
-    global browser_context
-    storage_state = browser_context.storage_state()
+    context = _get_context()
+    storage_state = context.storage_state()
     session_data = {
         "username": username,
         "last_login": datetime.now().isoformat(),
@@ -162,7 +382,7 @@ def load_session():
 
 def is_logged_in():
     """Checks if the user is currently logged in by looking for common home elements or interstitials."""
-    global page
+    page = _get_page()
     try:
         # Check if we are redirected to the feed or if the login button is absent
         page.wait_for_load_state("networkidle", timeout=5000)
@@ -192,7 +412,7 @@ def detect_challenge():
     Checks the page for common Instagram challenges, reCAPTCHA, 
     or suspicious activity warnings.
     """
-    global page
+    page = _get_page()
     challenge_indicators = [
         "iframe[title*='reCAPTCHA']",
         "iframe[src*='recaptcha']",
@@ -218,7 +438,7 @@ def detect_login_errors():
     Checks the page for login-specific errors like incorrect password
     or account not found.
     """
-    global page
+    page = _get_page()
     error_selectors = [
         "#slfErrorAlert",
         "p[aria-atomic='true'][role='alert']",
@@ -237,7 +457,7 @@ def detect_login_errors():
     return False
 
 def handle_email_verification(context):
-    global page
+    page = _get_page()
     print("Checking for email verification screen...")
     
     code_input_selector = context['selectors']['security']['code_input']
@@ -247,7 +467,7 @@ def handle_email_verification(context):
         page.wait_for_selector(code_input_selector, state="visible", timeout=10000)
         print("\n[!] Email verification detected.")
         verification_code = input(">>> Enter the 6-digit code sent to your email: ")
-        human_type(page, code_input_selector, verification_code)
+        human_type(code_input_selector, verification_code)
         page.click(continue_btn_selector)
         print("[+] Code submitted! Waiting for dashboard...")
         page.wait_for_load_state("networkidle")
@@ -256,7 +476,7 @@ def handle_email_verification(context):
 
 def handle_post_login_interstitials(context):
     """Handles and skips post-login interstitials like 'Save Info' and 'Notifications'."""
-    global page
+    page = _get_page()
     print("Checking for post-login interstitials...")
     interstitials = context.get('selectors', {}).get('interstitials', {})
     
@@ -282,7 +502,7 @@ def handle_post_login_interstitials(context):
 
 def login_and_save(email, password):
     """Performs the full login flow and saves the session."""
-    global page, browser_context
+    page = _get_page()
     page.goto("https://www.instagram.com")
     time.sleep(random.randint(3, 6))
 
@@ -335,24 +555,14 @@ def search_hashtag(hashtag: str):
     
     Returns:
         dict: A dictionary containing:
-            - hashtag (str): The searched hashtag.
-            - post_count (int): Number of posts found.
-            - posts (list): List of post dictionaries, each containing:
-                - id (str): Post PK.
-                - shortcode (str): Post shortcode.
-                - url (str): Link to the post.
-                - username (str): Creator's username.
-                - full_name (str): Creator's full name.
-                - caption (str): Post caption text.
-                - likes (int): Like count.
-                - comments (int): Comment count.
-                - media_url (str): Link to the post's image or video.
-                - timestamp (int): Taken at timestamp.
+            ...
             - method (str): "graphql" or "dom_scraping".
     """
-    global page
-    global INTERCEPTED_DATA
-    INTERCEPTED_DATA = [] # Clear previous results
+    with BROWSER_LOCK:
+        page = _get_page()
+        page.on("response", handle_response) # RE-ATTACH for this thread
+        global INTERCEPTED_DATA
+        INTERCEPTED_DATA = [] # Clear previous results
     
     print(f"Searching for hashtag: #{hashtag}")
     # revert to explore/tags which the user says was working
@@ -416,14 +626,78 @@ def search_hashtag(hashtag: str):
         print(f"[-] Error during hashtag search: {e}")
         return {"error": str(e), "hashtag": hashtag}
 
+def search_profile(usernames: List[str]):
+    """
+    Navigates to the profile pages of the given usernames one by one 
+    and returns the profile info and the first 5 posts for each.
+    
+    Args:
+        usernames (List[str]): A list of Instagram usernames to search.
+        
+    Returns:
+        List[Dict]: A list of results, each containing profile info and recent posts.
+    """
+    with BROWSER_LOCK:
+        page = _get_page()
+        page.on("response", handle_response) # RE-ATTACH for this thread
+        global INTERCEPTED_DATA
+        results = []
+    
+        for username in usernames:
+            username = username.strip().replace("@", "")
+            
+            if username in SEARCHED_USERNAMES:
+                print(f"[i] Skipping already searched profile: @{username}")
+                continue
+                
+            print(f"[+] Navigating to profile: @{username}")
+            INTERCEPTED_DATA = [] # Clear for each user 
+            try:
+                page.goto(f"https://www.instagram.com/{username}/")
+                
+                # Wait for data to be intercepted
+                print(f"[+] Waiting for @{username} data...")
+                max_wait = 15
+                start_time = time.time()
+                while time.time() - start_time < max_wait:
+                    has_profile = any(d.get("type") == "profile" and d.get("username").lower() == username.lower() for d in INTERCEPTED_DATA)
+                    has_posts = any(d.get("type") == "post" for d in INTERCEPTED_DATA)
+                    if has_profile and has_posts:
+                        break
+                    page.wait_for_timeout(1000)
+                    
+                # Extract and filter
+                profile = next((d for d in INTERCEPTED_DATA if d.get("type") == "profile" and d.get("username").lower() == username.lower()), None)
+                posts = [d for d in INTERCEPTED_DATA if d.get("type") == "post"][:5]
+                
+                results.append({
+                    "username": username,
+                    "profile": profile,
+                    "posts": posts,
+                    "found": profile is not None
+                })
+                print(f"[+] Captured data for @{username}")
+                
+            except Exception as e:
+                print(f"[-] Error searching profile @{username}: {e}")
+                results.append({"username": username, "error": str(e), "found": False})
+            
+            # Record as searched
+            SEARCHED_USERNAMES.add(username)
+            save_persistence()
+            
+    return results
+
 def launch_browser():
     """
     Launches browser and automatically completes authentication + session saving
     and navigates to instagram
 
     """
-    global page, browser_context, playwright_instance
-    email = os.getenv("INSTAGRAM_EMAIL")
+    with BROWSER_LOCK:
+        global page, browser_context, playwright_instance, _main_thread_id
+        _main_thread_id = threading.get_ident() # Store the main thread id
+        email = os.getenv("INSTAGRAM_EMAIL")
     password = os.getenv("INSTAGRAM_PASSWORD")
 
     if not email or not password:
@@ -437,7 +711,7 @@ def launch_browser():
     browser = playwright_instance.chromium.launch(
         channel="chrome",
         headless=False,
-        args=["--no-sandbox", "--disable-setuid-sandbox"],
+        args=["--no-sandbox", "--disable-setuid-sandbox", "--remote-debugging-port=9222"],
     )
     
     session_data = load_session()
@@ -465,76 +739,242 @@ def launch_browser():
 
     print("\n[+] Browser launch and authentication complete.")
 
+    # --- Inject Visual Effects and Lock ---
+    inject_visual_effects(page)
+
+def inject_visual_effects(page):
+    """Injects a lock overlay, glare effects, and a thinking indicator into the page."""
+    css = """
+    #pulsar-lock-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 2147483647;
+        pointer-events: auto;
+        background: transparent;
+        border: 4px solid transparent;
+        box-sizing: border-box;
+        transition: border 0.5s ease;
+    }
+    #pulsar-lock-overlay.active {
+        border: 4px solid rgba(0, 191, 255, 0.2);
+    }
+    .pulsar-glare {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: 
+            radial-gradient(circle at 0% 0%, rgba(138, 43, 226, 0.1) 0%, transparent 35%),
+            radial-gradient(circle at 100% 0%, rgba(0, 191, 255, 0.1) 0%, transparent 35%),
+            radial-gradient(circle at 100% 100%, rgba(138, 43, 226, 0.1) 0%, transparent 35%),
+            radial-gradient(circle at 0% 100%, rgba(0, 191, 255, 0.1) 0%, transparent 35%);
+        pointer-events: none;
+        z-index: 2147483646;
+    }
+    #pulsar-thinking {
+        position: fixed;
+        bottom: 30px;
+        left: 30px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        background: rgba(15, 15, 15, 0.85);
+        padding: 12px 24px;
+        border-radius: 50px;
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: #e0e0e0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 2147483647;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        letter-spacing: 0.5px;
+    }
+    .pulsar-loader {
+        width: 22px;
+        height: 22px;
+        border: 2px solid rgba(0, 191, 255, 0.1);
+        border-top: 2px solid #00BFFF;
+        border-radius: 50%;
+        animation: pulsar-spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    @keyframes pulsar-spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    """
+    
+    html = """
+    <div id="pulsar-lock-overlay"></div>
+    <div class="pulsar-glare"></div>
+    <div id="pulsar-thinking">
+        <div class="pulsar-loader"></div>
+        <span>Agent is thinking...</span>
+    </div>
+    """
+    
+    script = f"""
+    (function() {{
+        if (document.getElementById('pulsar-lock-overlay')) return;
+        const style = document.createElement('style');
+        style.textContent = `{css}`;
+        document.head.appendChild(style);
+        
+        const container = document.createElement('div');
+        container.innerHTML = `{html}`;
+        document.body.appendChild(container);
+        
+        // Add visual pulse to lock overlay
+        const lock = document.getElementById('pulsar-lock-overlay');
+        setInterval(() => {{
+            lock.classList.toggle('active');
+        }}, 2000);
+    }})();
+    """
+    try:
+        page.evaluate(script)
+        print("[+] Visual effects and browser lock injected successfully.")
+    except Exception as e:
+        print(f"[-] Failed to inject visual effects: {e}")
+
+def sleep(seconds: int):
+    """
+    sleep for a defined amount of time
+    """
+    time.sleep(seconds)
 
 def main():
-    launch_browser()
-    time.sleep(4)
-    result = search_hashtag("eccentricmovement")
-    print(result)
-    
-    # Keep browser open at the end if desired
-    print("\n[+] Tasks complete. Press Ctrl+C to close browser and exit.")
-    try:
-        page.wait_for_event("close", timeout=0)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if browser_context:
-            browser_context.close()
-        if playwright_instance:
-            playwright_instance.stop()
-
-instagram_agent = create_deep_agent(
-    model="google_genai:gemini-2.5-flash",
-    system_prompt=
-    """
-    You are an expert instagram lead generation agent. You will receive an Ideal Candidate Profile (ICP) which looks like this:
-
-    {
-        "niche": ["fitness", "nutrition"],
-        "follower_range": { "min": 10000, "max": 500000 },
-        "engagement_rate_min": 0.03,
-        "audience_demographics": { "location": "US", "age_range": "18-35" },
+    global page
+    # Example ICP and Item Profile
+    icp = {
+        "niche": ["fitness", "lifestyle", "entrepreneurship"],
+        "follower_range": { "min": 5000, "max": 100000 },
+        "engagement_rate_min": 0.02,
+        "audience_demographics": { "location": "US/Europe", "age_range": "20-40" },
         "content_language": "en",
-        "posting_frequency_min": "3/week"
+        "posting_frequency_min": "2/week"
+    }
+    
+    item_profile = {
+        "item_to_sell": "Pulsar AI - An automated lead generation and outreach tool for Instagram creators.",
+        "price": "$99/month",
+        "target_audience": "Content creators, coaches, and micro-influencers who want to monetize their audience."
     }
 
-    Your goal is to find leads by searching relevant hashtags and evaluating the returned posts.
+    print(f"Starting lead generation for niche: {icp['niche']}")
+    
+    # Load persistence
+    load_persistence()
+    
+    # Launch browser first
+    launch_browser()
+    
+    # Run the agent with a persistent thread_id and checkpointer
+    with SqliteSaver.from_conn_string(CHECKPOINT_DB) as saver:
+        instagram_agent = get_instagram_agent(checkpointer=saver)
+        
+        config = {"configurable": {"thread_id": "instagram_lead_gen_v1"}}
+        
+        response = instagram_agent.invoke(
+            {"messages": [{"role": "user", "content": f"Find 50 potential leads in the {icp['niche']} niche. ICP: {json.dumps(icp)}, Item: {json.dumps(item_profile)}"}]},
+            config=config
+        )
+    
+    print("\n" + "="*50)
+    print("FINAL AGENT RESPONSE:")
+    # Print the farewell message
+    if "messages" in response and response["messages"]:
+        last_message = response["messages"][-1]
+        print(last_message.content)
+    
+    print("\n" + "STAGED LEADS COLLECTED:")
+    print(json.dumps(STAGED_LEADS, indent=4))
+    print("="*50)
 
-    Tools available:
-    - launch_browser(): Launches browser, performs automatic login, and persists the session.
-    - search_hashtag(hashtag: str): Searches for a hashtag and returns a dictionary with post data.
-        Return schema:
+    # Keep browser open at the end
+    print("\n[+] Tasks complete. Press Ctrl+C to close browser and exit.")
+    try:
+        if page:
+            page.wait_for_event("close", timeout=0)
+    except Exception:
+        pass
+    finally:
+        # Clean up safely
+        try:
+            if browser_context:
+                browser_context.close()
+            if playwright_instance:
+                playwright_instance.stop()
+        except:
+            pass
+
+def get_instagram_agent(checkpointer=None):
+    return create_deep_agent(
+        model="google_genai:gemini-2.0-flash",
+        system_prompt="""
+        You are an expert instagram lead generation agent. Your goal is to find leads to sell a specific product to. 
+        You will receive an Ideal Candidate Profile (ICP) and a product profile.
+
+        ICP Example:
         {
-            "hashtag": str,
-            "post_count": int,
-            "posts": [
-                {
-                    "id": str,
-                    "shortcode": str,
-                    "url": str,
-                    "username": str,
-                    "full_name": str,
-                    "caption": str,
-                    "likes": int,
-                    "comments": int,
-                    "media_url": str,
-                    "timestamp": int
-                }
-            ],
-            "method": str
+            "niche": ["fitness", "nutrition"],
+            "follower_range": { "min": 10000, "max": 500000 },
+            "engagement_rate_min": 0.03,
+            "audience_demographics": { "location": "US", "age_range": "18-35" },
+            "content_language": "en",
+            "posting_frequency_min": "3/week"
         }
 
-    Usage Pattern:
-    1. Call launch_browser() once at the start of your session.
-    2. Call search_hashtag(hashtag) for relevant niche hashtags.
-    3. Iterate through the returned posts and identify leads that match the ICP based on captions, engagement (likes/comments), and overall niche relevance.
-    """,
-    tools=[
-        launch_browser,
-        search_hashtag,
-    ]
-)
+        Product Example:
+        {
+            "item_to_sell": "A video clipping agency which sells clipping services to make short form reels from larger videos",
+            "price": "$100/month",
+            "target_audience": "Small creators who do most things by themselves who might need help with video editing"
+        }
+
+        Your goal is to find leads by searching relevant hashtags and evaluating the returned posts or by investigating specific usernames.
+
+        **CRITICAL**: The browser is ALREADY launched and logged in. DO NOT call `launch_browser` or try to login.
+        
+        Tools available:
+        1. search_hashtag(hashtag: str): Searches for a hashtag and returns a dictionary with post data.
+        2. search_profile(usernames: List[str]): Returns detailed profile info and first 5 posts for users.
+        3. push_leads(leads: List[Dict]): Pushes analyzed and validated leads to the final list. CALL THIS after evaluating profiles!
+        4. sleep(seconds: int): Waits for load/network.
+
+        Usage Pattern (MANDATORY):
+        1. search_hashtag(hashtag) -> Identify potential candidates.
+        2. search_profile(usernames) -> Analyze candidates to verify they match the ICP.
+        3. push_leads(leads) -> **MANDATORY**: You MUST call this to save your verified leads.
+        4. Repeat until you find enough leads.
+
+        Example Workflow:
+        1. search_hashtag("entrepreneur")
+        2. Identifies '@user1', '@user2'
+        3. search_profile(["user1", "user2"])
+        4. If '@user1' matches ICP -> push_leads([{"username": "user1", ...}])
+
+        Return Schema:
+        Your final response MUST be a JSON object with:
+        - success: Boolean.
+        - farewell_message: A friendly closing message summarizing your findings.
+        """,
+        tools=[search_hashtag, search_profile, push_leads, sleep],
+        response_format= {
+            "type": "object",
+            "properties": {
+                "success": { "type": "boolean" },
+                "farewell_message": { "type": "string" }
+            },
+            "required": ["success", "farewell_message"]
+        },
+        checkpointer=checkpointer
+    )
 
 if __name__ == "__main__":
     main()

@@ -5,3 +5,4 @@ langgraph
 google-generativeai
 python-dotenv
 deepagents
+langgraph-checkpoint-sqlite
