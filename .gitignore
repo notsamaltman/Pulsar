@@ -1,1 +1,3 @@
 .agent
+ml-service/staged_leads.json
+ml-service/searched_usernames.json

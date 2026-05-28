@@ -12,17 +12,12 @@ import threading
 import json
 import os
 from pydantic import BaseModel, Field
-from langgraph.checkpoint.sqlite import SqliteSaver
-import sqlite3
+from langchain_ollama import ChatOllama
 
-# --- Global Storage for Intercepted Data & Persistence ---
+# --- Global Storage for Intercepted Data ---
 INTERCEPTED_DATA = []
 STAGED_LEADS = []
 SEARCHED_USERNAMES: Set[str] = set()
-
-LEADS_FILE = "staged_leads.json"
-HISTORY_FILE = "searched_usernames.json"
-CHECKPOINT_DB = "agent_state.sqlite"
 
 page = None
 browser_context = None
@@ -32,31 +27,6 @@ _thread_local = threading.local()
 _main_thread_id = None
 BROWSER_LOCK = threading.Lock()
 
-def save_persistence():
-    """Saves current state to JSON files."""
-    try:
-        with open(LEADS_FILE, "w") as f:
-            json.dump(STAGED_LEADS, f, indent=4)
-        with open(HISTORY_FILE, "w") as f:
-            json.dump(list(SEARCHED_USERNAMES), f, indent=4)
-    except Exception as e:
-        print(f"[-] Persistence save failed: {e}")
-
-def load_persistence():
-    """Loads state from JSON files if they exist."""
-    global STAGED_LEADS, SEARCHED_USERNAMES
-    if os.path.exists(LEADS_FILE):
-        try:
-            with open(LEADS_FILE, "r") as f:
-                STAGED_LEADS = json.load(f)
-                print(f"[+] Loaded {len(STAGED_LEADS)} existing leads from disk.")
-        except: pass
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r") as f:
-                SEARCHED_USERNAMES = set(json.load(f))
-                print(f"[+] Loaded {len(SEARCHED_USERNAMES)} searched usernames from disk.")
-        except: pass
 
 def _get_page():
     """Returns a thread-safe page object. Uses CDP connection if in a child thread."""
@@ -199,9 +169,6 @@ def push_leads(leads: List[Dict[str, Any]]):
                 count += 1
         except Exception as e:
             print(f"[-] Failed to validate lead data for @{lead_data.get('username', 'unknown')}: {e}")
-    
-    if count > 0:
-        save_persistence()
     
     return f"Successfully pushed {count} leads."
 
@@ -551,7 +518,10 @@ def login_and_save(email, password):
 def search_hashtag(hashtag: str):
     """
     Searches for a hashtag on Instagram and extracts details of all loaded posts.
-    Prioritizes data intercepted from official GraphQL/API responses.
+
+    CRITICAL: ALWAYS START HERE. Use this to find new users from a hashtag.
+    Input MUST be a single word keyword (e.g. 'lifestyle').
+    DO NOT pass usernames here.
     
     Returns:
         dict: A dictionary containing:
@@ -630,6 +600,10 @@ def search_profile(usernames: List[str]):
     """
     Navigates to the profile pages of the given usernames one by one 
     and returns the profile info and the first 5 posts for each.
+
+    STRICTLY FOR VALIDATION ONLY. Use this ONLY after you have extracted 
+    usernames from 'search_hashtag'. 
+    NEVER use this with general keywords like 'lifestyle' or 'entrepreneur'.
     
     Args:
         usernames (List[str]): A list of Instagram usernames to search.
@@ -684,7 +658,6 @@ def search_profile(usernames: List[str]):
             
             # Record as searched
             SEARCHED_USERNAMES.add(username)
-            save_persistence()
             
     return results
 
@@ -852,7 +825,7 @@ def main():
     global page
     # Example ICP and Item Profile
     icp = {
-        "niche": ["fitness", "lifestyle", "entrepreneurship"],
+        "niche": ["lifestyle", "entrepreneurship", "motivational"],
         "follower_range": { "min": 5000, "max": 100000 },
         "engagement_rate_min": 0.02,
         "audience_demographics": { "location": "US/Europe", "age_range": "20-40" },
@@ -868,22 +841,42 @@ def main():
 
     print(f"Starting lead generation for niche: {icp['niche']}")
     
-    # Load persistence
-    load_persistence()
-    
     # Launch browser first
     launch_browser()
     
-    # Run the agent with a persistent thread_id and checkpointer
-    with SqliteSaver.from_conn_string(CHECKPOINT_DB) as saver:
-        instagram_agent = get_instagram_agent(checkpointer=saver)
-        
-        config = {"configurable": {"thread_id": "instagram_lead_gen_v1"}}
-        
-        response = instagram_agent.invoke(
-            {"messages": [{"role": "user", "content": f"Find 50 potential leads in the {icp['niche']} niche. ICP: {json.dumps(icp)}, Item: {json.dumps(item_profile)}"}]},
-            config=config
-        )
+    config = {"configurable": {"thread_id": "instagram_lead_gen_v1"}}
+
+    # Inside main()
+    target_niches = ", ".join(icp['niche'])
+
+    unified_content = f"""
+    EXECUTE TASK NOW: 
+    Find 50 potential leads in the following niches: {target_niches}.
+    Start by calling search_hashtag for each niche.
+
+    1. Use search_hashtag for each of these: {", ".join(icp['niche'])}.
+    2. From the results, call search_profile on the usernames found which match the ICP.
+    3. If they have between {icp['follower_range']['min']} and {icp['follower_range']['max']} followers, call push_leads.
+
+    TARGET ICP DATA: 
+    {json.dumps(icp)}
+
+    ITEM PROFILE DATA: 
+    {json.dumps(item_profile)}
+    """
+
+    instagram_agent = get_instagram_agent()
+    config = {"configurable": {"thread_id": "instagram_lead_gen_v1"}}
+    
+    # 3. Pass it strictly as a single user string element
+    response = instagram_agent.invoke(
+        {
+            "messages": [
+                {"role": "user", "content": unified_content}
+            ]
+        },
+        config=config
+    )
     
     print("\n" + "="*50)
     print("FINAL AGENT RESPONSE:")
@@ -913,68 +906,21 @@ def main():
         except:
             pass
 
-def get_instagram_agent(checkpointer=None):
+def get_instagram_agent():
     return create_deep_agent(
-        model="google_genai:gemini-2.0-flash",
+        model=ChatOllama(model="gemma4:e4b", temperature=0),
         system_prompt="""
-        You are an expert instagram lead generation agent. Your goal is to find leads to sell a specific product to. 
-        You will receive an Ideal Candidate Profile (ICP) and a product profile.
-
-        ICP Example:
-        {
-            "niche": ["fitness", "nutrition"],
-            "follower_range": { "min": 10000, "max": 500000 },
-            "engagement_rate_min": 0.03,
-            "audience_demographics": { "location": "US", "age_range": "18-35" },
-            "content_language": "en",
-            "posting_frequency_min": "3/week"
-        }
-
-        Product Example:
-        {
-            "item_to_sell": "A video clipping agency which sells clipping services to make short form reels from larger videos",
-            "price": "$100/month",
-            "target_audience": "Small creators who do most things by themselves who might need help with video editing"
-        }
-
-        Your goal is to find leads by searching relevant hashtags and evaluating the returned posts or by investigating specific usernames.
-
-        **CRITICAL**: The browser is ALREADY launched and logged in. DO NOT call `launch_browser` or try to login.
+        You are a lead generation bot. You only respond with tool calls.
         
-        Tools available:
-        1. search_hashtag(hashtag: str): Searches for a hashtag and returns a dictionary with post data.
-        2. search_profile(usernames: List[str]): Returns detailed profile info and first 5 posts for users.
-        3. push_leads(leads: List[Dict]): Pushes analyzed and validated leads to the final list. CALL THIS after evaluating profiles!
-        4. sleep(seconds: int): Waits for load/network.
-
-        Usage Pattern (MANDATORY):
-        1. search_hashtag(hashtag) -> Identify potential candidates.
-        2. search_profile(usernames) -> Analyze candidates to verify they match the ICP.
-        3. push_leads(leads) -> **MANDATORY**: You MUST call this to save your verified leads.
-        4. Repeat until you find enough leads.
-
-        Example Workflow:
-        1. search_hashtag("entrepreneur")
-        2. Identifies '@user1', '@user2'
-        3. search_profile(["user1", "user2"])
-        4. If '@user1' matches ICP -> push_leads([{"username": "user1", ...}])
-
-        Return Schema:
-        Your final response MUST be a JSON object with:
-        - success: Boolean.
-        - farewell_message: A friendly closing message summarizing your findings.
+        RULES:
+        1. Your FIRST action must be search_hashtag.
+        2. NEVER use search_profile for niche keywords (lifestyle, entrepreneur, etc).
+        3. Only use search_profile once you have specific usernames which match the ICP from a hashtag search.
+        4. When you have found valid leads, call push_leads immediately.
+        5. DO NOT talk to the user. Only call tools.
         """,
         tools=[search_hashtag, search_profile, push_leads, sleep],
-        response_format= {
-            "type": "object",
-            "properties": {
-                "success": { "type": "boolean" },
-                "farewell_message": { "type": "string" }
-            },
-            "required": ["success", "farewell_message"]
-        },
-        checkpointer=checkpointer
     )
-
+    
 if __name__ == "__main__":
     main()
