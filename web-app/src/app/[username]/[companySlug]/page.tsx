@@ -159,15 +159,14 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
 
             {activeTab === "campaigns" ? (
               <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                    {[
                      { label: "Leads Detected", value: "0", icon: <Target className="w-3.5 h-3.5" /> },
                      { label: "Emails Sent", value: "0", icon: <Zap className="w-3.5 h-3.5" /> },
-                     { label: "Active Responses", value: "0", icon: <Users className="w-3.5 h-3.5" /> },
-                     { label: "AI Confidence", value: "98%", icon: <Zap className="w-3.5 h-3.5" /> }
+                     { label: "Active Responses", value: "0", icon: <Users className="w-3.5 h-3.5" /> }
                    ].map((stat, i) => (
                      <div key={i} className="bg-[#171717] border border-[#2A2A2A] p-5 rounded-xl space-y-3 shadow-md">
-                        <div className="flex items-center justify-between text-[#333333]">
+                        <div className="flex items-center justify-between text-white">
                           <span className="text-[9px] font-bold uppercase tracking-widest">{stat.label}</span>
                           {stat.icon}
                         </div>
