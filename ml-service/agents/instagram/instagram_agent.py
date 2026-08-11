@@ -12,10 +12,14 @@ import threading
 import json
 import os
 from pydantic import BaseModel, Field
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Dict, Any, Optional, Set
 import operator
+
+# --- Add parent path to import utils ---
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from utils.lead_db import search_existing_leads_sync, save_leads_to_supabase_sync, search_existing_leads_by_niche_sync, save_profiles_to_catalogue_sync
 
 # --- Global Storage for Intercepted Data ---
 INTERCEPTED_DATA = []
@@ -33,12 +37,17 @@ BROWSER_LOCK = threading.Lock()
 # --- LangGraph State Definition ---
 class InstagramAgentState(TypedDict):
     icp: Dict[str, Any] # Contains campaign inputs: industry, targetProfile, focus, etc.
+    niche: str # Derived from ICP - used for DB search and hashtag generation
     item_profile: Dict[str, Any]
     hashtags: List[str]
     discovered_posts: List[Dict[str, Any]] # Raw posts from hashtags
     usernames_to_enrich: List[str]
     profiles_data: List[Dict[str, Any]] # Full bio + metrics
-    staged_leads: List[Dict[str, Any]]
+    staged_leads: List[Dict[str, Any]] # LLM-validated campaign leads (pushed via BullMQ)
+    catalogue_profiles: List[Dict[str, Any]] # ALL browser profiles (saved to DB for catalogue)
+    db_leads: List[Dict[str, Any]] # Leads from DB pre-check (before LLM filter)
+    needs_browser_search: bool # Whether we need to fall back to browser
+    target_lead_count: int # How many leads we're aiming for
     error: Optional[str]
 
 
@@ -107,7 +116,7 @@ load_dotenv()
 
 # --- Existing Helper Functions ---
 script_dir = Path(__file__).parent
-context_path = script_dir / "context" / "instagram_context.json"
+context_path = script_dir / "instagram_context.json"
 session_path = script_dir / "session.json"
 
 with open(context_path, 'r') as file:
@@ -149,8 +158,6 @@ def parse_xdt_media(items: List[Dict[Any, Any]]):
         except Exception as e:
             print(f"[-] Error parsing media item: {e}")
             continue
-    return extracted
-
     return extracted
 
 class Lead(BaseModel):
@@ -561,11 +568,11 @@ def search_hashtag(hashtag: str):
         print("[+] Scrolling to load more content...")
         for _ in range(5): # Increase scrolls
             page.mouse.wheel(0, 2000) # Use mouse.wheel as in the working script
-            time.sleep(random.uniform(2.0, 3.0))
+            time.sleep(random.uniform(1.0, 2.0))
         
         # Give it a few seconds to trigger more network requests
         print("[+] Waiting for network interception to complete...")
-        time.sleep(5) 
+        time.sleep(3) 
         
         # Deduplicate intercepted data by ID or URL
         unique_posts = {}
@@ -640,7 +647,7 @@ def search_profile(usernames: List[str]):
                 
             # Add random delay between profiles to avoid detection (except first)
             if i > 0:
-                delay = random.uniform(10.0, 25.0)
+                delay = random.uniform(4.0, 10.0)
                 print(f"[*] Sleeping for {delay:.2f}s before next profile...")
                 time.sleep(delay)
 
@@ -842,7 +849,11 @@ def sleep(seconds: int):
     """
     time.sleep(seconds)
 
-llm = ChatOllama(model="gemma4:e4b", format="json", temperature=0)
+llm = ChatGroq(
+    model="llama-3.1-8b-instant",
+    temperature=0,
+    model_kwargs={"response_format": {"type": "json_object"}}
+)
 
 def invoke_llm_with_retry(prompt: str, max_retries: int = 3) -> Optional[Dict[str, Any]]:
     """Invokes LLM with retries and robust JSON extraction."""
@@ -874,26 +885,189 @@ def invoke_llm_with_retry(prompt: str, max_retries: int = 3) -> Optional[Dict[st
                 return None
     return None
 
+def push_leads(leads: List[Dict[str, Any]], campaign_id: Optional[str] = None, niche: str = ""):
+    """Pushes staged leads to global memory and persists to Supabase with vector embeddings."""
+    global STAGED_LEADS
+    for lead in leads:
+        if lead not in STAGED_LEADS:
+            STAGED_LEADS.append(lead)
+    save_leads_to_supabase_sync(leads, campaign_id, niche)
+
 # --- LangGraph Nodes ---
+
+def derive_niche_node(state: InstagramAgentState):
+    """Derives the niche from ICP for use as Instagram agent's niche."""
+    print("\n--- [Node] Deriving Niche from ICP ---")
+    icp = state.get('icp', {})
+    target_count = icp.get("target_lead_count", 10)
+    
+    # Build niche string from ICP fields
+    industry = icp.get("industry", "")
+    target_profile = icp.get("targetProfile", "")
+    focus = icp.get("focus", "")
+    niche = f"{industry} {target_profile} {focus}".strip()
+    if not niche:
+        niche = "lifestyle"
+    
+    print(f"[+] Agent niche set to: '{niche}'")
+    return {"niche": niche, "target_lead_count": target_count}
+
+def db_search_node(state: InstagramAgentState):
+    """
+    Searches Supabase database for existing leads using:
+    1. Niche-based text matching
+    2. Follower count filtering  
+    3. Vector similarity search against ICP
+    4. Geo-country filtering (if geoTarget is set and not 'global')
+    Results are stored for LLM filtering (not directly staged).
+    """
+    print("\n--- [Node] DB Search (Niche + Followers + Vector + Geo) ---")
+    icp = state.get('icp', {})
+    niche = state.get('niche', '')
+    target_count = state.get('target_lead_count', 10)
+    geo_target = icp.get('geoTarget', '')
+    
+    # Search with a higher limit so LLM can filter down
+    search_limit = target_count * 3
+    cached_leads = search_existing_leads_by_niche_sync(icp, niche=niche, limit=search_limit, geo_target=geo_target)
+    
+    if cached_leads:
+        for lead in cached_leads:
+            username = lead.get("username")
+            if username:
+                SEARCHED_USERNAMES.add(username.lower())
+        print(f"[+] Found {len(cached_leads)} potential leads from DB (niche + vector + geo search)")
+        return {"db_leads": cached_leads}
+    else:
+        print("[i] No matching leads found in database.")
+    return {"db_leads": []}
+
+def llm_filter_db_leads_node(state: InstagramAgentState):
+    """
+    Uses LLM to filter DB-sourced leads - picks the best matches from cached results.
+    Also estimates country from creator name/username for geo filtering.
+    Determines if browser search is needed based on how many leads pass.
+    
+    Sends all candidates in a single call since Llama 3.1 8B has 128K context.
+    """
+    print("\n--- [Node] LLM Filter on DB Leads ---")
+    icp = state.get('icp', {})
+    niche = state.get('niche', '')
+    db_leads = state.get('db_leads', [])
+    target_count = state.get('target_lead_count', 10)
+    geo_target = icp.get('geoTarget', '')
+    
+    if not db_leads:
+        print("[i] No DB leads to filter. Browser search will be needed.")
+        return {"staged_leads": [], "needs_browser_search": True}
+    
+    # Prepare rich candidate data - include everything we have since context is huge
+    candidates = []
+    for lead in db_leads:
+        posts = lead.get("posts", [])
+        post_summaries = [{"caption": p.get("caption", "")[:100], "likes": p.get("likes", 0)} for p in posts[:3]] if isinstance(posts, list) else []
+        candidates.append({
+            "username": lead.get("username", ""),
+            "creator_info": lead.get("creator_info", ""),
+            "followers": lead.get("followers", 0),
+            "reasoning": lead.get("reasoning", ""),
+            "geo_country": lead.get("geo_country", ""),
+            "posts": post_summaries
+        })
+    
+    # Build geo instruction for the prompt
+    geo_instruction = ""
+    if geo_target and geo_target.strip().lower() not in ("", "global", "worldwide", "any"):
+        geo_instruction = f"""\n\nGEO TARGETING (IMPORTANT):
+- Target geography: {geo_target}
+- For each selected lead, estimate their likely country based on their username, full name, bio language, and content context.
+- ONLY select leads who are likely based in or relevant to: {geo_target}
+- If a lead's geo_country is already set, use that. Otherwise, estimate from their name/username."""
+    else:
+        geo_instruction = """\n\nCOUNTRY ESTIMATION:
+- For each selected lead, estimate their likely country based on their username, full name, bio language, and content context.
+- Use your best judgment from naming patterns (e.g., "raj_sharma" -> India, "john_smith" -> US/UK, "tanaka_yuki" -> Japan)."""
+    
+    prompt = f"""You are a lead qualification expert for an Instagram outreach campaign.
+
+Campaign Target Settings:
+- Industry: {icp.get('industry')}
+- Niche: {niche}
+- Target Profile: {icp.get('targetProfile')}
+- Focus: {icp.get('focus')}
+- Exclusions: {icp.get('exclusions')}
+- Content Type: {icp.get('contentType', 'any')}
+
+Item being sold: {state.get('item_profile', {}).get('item_to_sell', 'N/A')}
+Target audience: {state.get('item_profile', {}).get('target_audience', 'N/A')}
+{geo_instruction}
+
+From these {len(candidates)} cached leads from our database, select the BEST matches for this campaign.
+Be selective - only pick leads that are a strong fit for the item being sold and target audience.
+
+Candidates:
+{json.dumps(candidates)}
+
+Respond ONLY with a JSON object: {{"selected": [{{"username": "handle1", "estimated_country": "Country Name"}}, ...]}}"""
+
+    data = invoke_llm_with_retry(prompt)
+    
+    selected_leads = []
+    if data and "selected" in data:
+        # Handle both old format (list of strings) and new format (list of objects)
+        selected_map = {}
+        for item in data["selected"]:
+            if isinstance(item, str):
+                selected_map[item.strip().replace("@", "").lower()] = None
+            elif isinstance(item, dict):
+                username = item.get("username", "").strip().replace("@", "").lower()
+                selected_map[username] = item.get("estimated_country")
+        
+        for lead in db_leads:
+            lead_username = lead.get("username", "").lower()
+            if lead_username in selected_map:
+                # Set geo_country: prefer existing, then LLM estimate
+                estimated_country = selected_map[lead_username]
+                if estimated_country and not lead.get("geo_country"):
+                    lead["geo_country"] = estimated_country
+                selected_leads.append(lead)
+        print(f"[+] LLM selected {len(selected_leads)} leads from DB cache")
+    else:
+        print("[-] LLM filter failed, using all DB leads as fallback")
+        selected_leads = db_leads
+    
+    needs_more = len(selected_leads) < target_count
+    if needs_more:
+        print(f"[i] Have {len(selected_leads)}/{target_count} leads. Will do browser search for more.")
+    else:
+        print(f"[+] Have {len(selected_leads)}/{target_count} leads. No browser search needed!")
+    
+    return {"staged_leads": selected_leads, "needs_browser_search": needs_more}
+
+def should_browser_search(state: InstagramAgentState) -> str:
+    """Conditional edge: decides whether to do browser search or skip to export."""
+    if state.get('needs_browser_search', True):
+        return "init_browser"
+    return "export"
 
 def init_node(state: InstagramAgentState):
     """Initializes the browser and session."""
     print("\n--- [Node] Initializing Browser ---")
     launch_browser()
-    time.sleep(random.uniform(2.0, 5.0))
+    time.sleep(random.uniform(1.0, 3.0))
     return {}
 
 def generate_hashtags_node(state: InstagramAgentState):
-    """Gemma generates hashtags based on ICP."""
+    """Generates hashtags based on niche (derived from ICP)."""
     print("\n--- [Node] Generating Hashtags ---")
+    niche = state.get('niche', 'lifestyle')
     icp = state.get('icp', {})
-    industry = icp.get("industry", "lifestyle")
     target_profile = icp.get("targetProfile", "")
     focus = icp.get("focus", "")
     
     prompt = f"""
     Given the Campaign Details:
-    - Industry: {industry}
+    - Niche: {niche}
     - Target Profile: {target_profile}
     - Focus: {focus}
     
@@ -907,7 +1081,7 @@ def generate_hashtags_node(state: InstagramAgentState):
         return {"hashtags": hashtags}
     else:
         print("[-] Hashtag generation failed after retries.")
-        return {"hashtags": [industry.lower()]}
+        return {"hashtags": [niche.split()[0].lower()]}
 
 def hashtag_search_node(state: InstagramAgentState):
     """Searches hashtags and collects discovered posts."""
@@ -917,7 +1091,7 @@ def hashtag_search_node(state: InstagramAgentState):
         results = search_hashtag(hashtag)
         if "posts" in results:
             all_posts.extend(results["posts"])
-        time.sleep(random.uniform(3.0, 7.0)) # Delay between hashtag searches
+        time.sleep(random.uniform(2.0, 4.0)) # Reduced delay between hashtag searches
     
     # Deduplicate by username
     seen = set()
@@ -930,80 +1104,16 @@ def hashtag_search_node(state: InstagramAgentState):
     print(f"[+] Discovered {len(unique_posts)} unique potential leads.")
     return {"discovered_posts": unique_posts}
 
-def filter_profiles_node(state: InstagramAgentState):
-    """Gemma filters raw posts to pick promising usernames."""
-    print("\n--- [Node] Filtering Usernames ---")
-    icp = state['icp']
-    target_count = icp.get("target_lead_count", 10) # Default to 10 for more leads
-    exclusions = icp.get("exclusions", "")
-    min_followers = icp.get("minFollowers", "any")
-    
-    candidates = []
-    # Take more discovered posts to find better leads
-    for p in state.get('discovered_posts', [])[:50]: 
-        candidates.append({
-            "username": p.get("username"),
-            "caption": p.get("caption", "")[:150]
-        })
-    
-    if not candidates:
-        print("[-] No candidates discovered.")
-        return {"usernames_to_enrich": []}
-
-    print(f"[*] Analyzing {len(candidates)} candidates to pick top ~20 promising profiles...")
-    
-    prompt = f"""
-    Industry: {icp.get('industry')}
-    Target: {icp.get('targetProfile')}
-    
-    Pick TOP 15 handles from these {len(candidates)} candidates for a SaaS outreach campaign.
-    
-    Candidates: {json.dumps(candidates)}
-    
-    Respond ONLY with a JSON object: {{"usernames": ["handle1", "handle2", ...]}}
+def collect_browser_profiles_node(state: InstagramAgentState):
     """
-    data = invoke_llm_with_retry(prompt)
-    if data and "usernames" in data:
-        usernames = [u.strip().replace("@", "") for u in data["usernames"]]
-        print(f"[+] Picked {len(usernames)} potential usernames for enrichment.")
-        return {"usernames_to_enrich": usernames}
-    else:
-        # Fallback
-        fallback = [c['username'] for c in candidates[:20]]
-        return {"usernames_to_enrich": fallback}
-
-def enrichment_node(state: InstagramAgentState):
-    """Gets detailed profile info for filtered users."""
-    print("\n--- [Node] Enriching Profiles ---")
-    usernames = state.get('usernames_to_enrich', [])
-    if not usernames:
-        return {"profiles_data": []}
-        
-    results = search_profile(usernames)
-    profiles = []
-    for res in results:
-        if res.get("found") and res.get("profile"):
-            profiles.append({
-                "username": res["username"],
-                "bio": res["profile"].get("biography"),
-                "followers": res["profile"].get("followers"),
-                "is_private": res["profile"].get("is_private"),
-                "posts": res.get("posts", [])
-            })
-        time.sleep(random.uniform(4.0, 8.0)) # Stronger delay between profile enrichment
-    return {"profiles_data": profiles}
-
-def validation_node(state: InstagramAgentState):
-    """Final check on enriched data with pre-LLM filtering and increased batch size."""
-    print("\n--- [Node] Final Validation ---")
-    profiles = state.get('profiles_data', [])
-    icp = state['icp']
+    Collects ALL browser-discovered profiles directly as leads WITHOUT LLM approval.
+    Only basic pre-filtering (followers, engagement) is applied.
+    """
+    print("\n--- [Node] Collecting Browser Profiles (No LLM Approval) ---")
+    icp = state.get('icp', {})
+    niche = state.get('niche', '')
     
-    if not profiles:
-        print("[-] No profiles to validate.")
-        return {"staged_leads": []}
-
-    # --- Pre-LLM Filtering ---
+    # Basic follower threshold from ICP
     min_followers_str = str(icp.get("minFollowers", "0")).lower()
     min_f = 0
     if "k" in min_followers_str:
@@ -1011,51 +1121,187 @@ def validation_node(state: InstagramAgentState):
     elif min_followers_str.isdigit():
         min_f = int(min_followers_str)
     
-    filtered_profiles = []
+    discovered = state.get('discovered_posts', [])
+    existing_leads = list(state.get('staged_leads', []))
+    existing_usernames = {l.get('username', '').lower() for l in existing_leads}
+    
+    # Extract unique usernames from discovered posts
+    seen = set()
+    usernames_to_enrich = []
+    for p in discovered:
+        username = p.get("username", "")
+        if username and username.lower() not in seen and username.lower() not in existing_usernames:
+            seen.add(username.lower())
+            usernames_to_enrich.append(username)
+    
+    # Limit to top 25 for enrichment
+    usernames_to_enrich = usernames_to_enrich[:25]
+    print(f"[+] Will enrich {len(usernames_to_enrich)} browser-discovered profiles")
+    return {"usernames_to_enrich": usernames_to_enrich}
+
+def enrichment_node(state: InstagramAgentState):
+    """Enriches browser profiles. Checks database cache first to skip browser navigation for known leads."""
+    print("\n--- [Node] Enriching Browser Profiles ---")
+    usernames = state.get('usernames_to_enrich', [])
+    if not usernames:
+        return {"profiles_data": []}
+
+    print(f"[*] Pre-checking database cache for {len(usernames)} candidates...")
+    cached_leads = search_existing_leads_sync(icp={}, target_handles=usernames, limit=len(usernames))
+    cached_map = {lead['username'].lower(): lead for lead in cached_leads}
+    
+    profiles = []
+    usernames_to_scrape = []
+    
+    for username in usernames:
+        clean_user = username.strip().replace("@", "")
+        if clean_user.lower() in cached_map:
+            cached = cached_map[clean_user.lower()]
+            print(f"[+] Cache HIT: Found @{clean_user} in database. Skipping browser navigation.")
+            profiles.append({
+                "username": clean_user,
+                "bio": cached.get("bio") or (cached.get("profile", {}).get("biography") if isinstance(cached.get("profile"), dict) else "") or "",
+                "followers": cached.get("followers", 0),
+                "is_private": False,
+                "posts": cached.get("posts", []),
+                "from_cache": True,
+                "creator_info": cached.get("creator_info", ""),
+                "reasoning": cached.get("reasoning", "")
+            })
+        else:
+            usernames_to_scrape.append(clean_user)
+            
+    if usernames_to_scrape:
+        print(f"[*] Cache MISS: Scrape {len(usernames_to_scrape)} profiles via browser...")
+        scraped_results = search_profile(usernames_to_scrape)
+        for res in scraped_results:
+            if res.get("found") and res.get("profile"):
+                profiles.append({
+                    "username": res["username"],
+                    "bio": res["profile"].get("biography"),
+                    "followers": res["profile"].get("followers"),
+                    "is_private": res["profile"].get("is_private"),
+                    "posts": res.get("posts", []),
+                    "from_cache": False
+                })
+            time.sleep(random.uniform(2.0, 5.0))
+            
+    return {"profiles_data": profiles}
+
+def catalogue_and_validate_node(state: InstagramAgentState):
+    """
+    Two-tier lead processing:
+    
+    TIER 1 (DB Catalogue): ALL browser-enriched profiles are saved to the DB
+    catalogue immediately (no LLM needed). This builds a massive searchable
+    catalogue to avoid slow browser traversal in future runs.
+    
+    TIER 2 (Campaign Leads): LLM validates which profiles are actual campaign
+    leads worth pushing through BullMQ results stream.
+    
+    Uses large batch sizes (~40 profiles per call) to maximize Llama 3.1 8B's
+    128K context window and minimize API calls.
+    """
+    print("\n--- [Node] Catalogue All + LLM Validate Campaign Leads ---")
+    icp = state['icp']
+    niche = state.get('niche', '')
+    
+    # Start with existing staged leads from DB phase
+    validated_leads = list(state.get('staged_leads', []))
+    existing_usernames = {l.get('username', '').lower() for l in validated_leads}
+    
+    profiles = state.get('profiles_data', [])
+    if not profiles:
+        print("[-] No browser profiles to process.")
+        return {"staged_leads": validated_leads, "catalogue_profiles": []}
+
+    # --- Basic pre-filtering ---
+    min_followers_str = str(icp.get("minFollowers", "0")).lower()
+    min_f = 0
+    if "k" in min_followers_str:
+        min_f = int(float(min_followers_str.replace("k", "")) * 1000)
+    elif min_followers_str.isdigit():
+        min_f = int(min_followers_str)
+    
+    eligible_profiles = []
     for p in profiles:
+        username = p.get("username", "")
+        if not username or username.lower() in existing_usernames:
+            continue
+        if p.get("is_private"):
+            print(f"[-] @{username} skipped (private account)")
+            continue
         f_count = p.get("followers", 0) or 0
         if f_count < min_f:
-            print(f"[-] @{p['username']} filtered out (Followers: {f_count} < {min_f})")
+            print(f"[-] @{username} filtered out (Followers: {f_count} < {min_f})")
             continue
-            
-        # Optional: Check engagement
-        posts = p.get("posts", [])
-        if posts:
-            avg_likes = sum(post.get("likes", 0) for post in posts) / len(posts)
-            if avg_likes < 5: # Basic filter for inactive/very low engagement accounts
-                print(f"[-] @{p['username']} filtered out (Low engagement: {avg_likes} avg likes)")
-                continue
-        
-        filtered_profiles.append(p)
-        
-    print(f"[*] {len(filtered_profiles)} profiles passed pre-filter (out of {len(profiles)})")
-
-    validated_leads = []
-    batch_size = 5 # Increased batch size for efficiency
+        eligible_profiles.append(p)
     
-    for i in range(0, len(filtered_profiles), batch_size):
-        batch = filtered_profiles[i:i + batch_size]
-        print(f"[*] Analyzing batch of {len(batch)}: {', '.join(['@' + p['username'] for p in batch])}")
+    print(f"[+] {len(eligible_profiles)} profiles passed basic filter")
+    
+    # --- TIER 1: Save ALL eligible profiles to DB catalogue ---
+    print(f"[*] TIER 1: Saving all {len(eligible_profiles)} profiles to DB catalogue...")
+    save_profiles_to_catalogue_sync(eligible_profiles, niche=niche)
+    
+    # --- TIER 2: LLM validates which become campaign leads ---
+    # Llama 3.1 8B has 128K context. Each profile ~150-200 tokens.
+    # We can safely batch ~40 profiles per call.
+    print(f"[*] TIER 2: LLM validating campaign leads from {len(eligible_profiles)} profiles...")
+    
+    BATCH_SIZE = 40  # Maximized for 128K context window
+    
+    for i in range(0, len(eligible_profiles), BATCH_SIZE):
+        batch = eligible_profiles[i:i + BATCH_SIZE]
+        print(f"[*] Validating batch {i//BATCH_SIZE + 1} ({len(batch)} profiles)...")
         
         batch_info = []
-        for profile in batch:
+        for p in batch:
+            posts = p.get("posts", [])
+            post_summaries = [{"caption": post.get("caption", "")[:100], "likes": post.get("likes", 0)} for post in posts[:3]] if posts else []
             batch_info.append({
-                "username": profile["username"],
-                "bio": profile.get("bio", "")[:200],
-                "followers": profile.get("followers", 0),
-                "posts": [{"caption": p.get("caption", "")[:60], "likes": p.get("likes", 0)} for p in profile.get("posts", [])[:3]]
+                "username": p["username"],
+                "bio": (p.get("bio") or "")[:300],
+                "followers": p.get("followers", 0),
+                "posts": post_summaries
             })
-
-        prompt = f"""
-        Campaign Target Settings:
-        - Industry: {icp.get('industry')}
-        - Target Profile: {icp.get('targetProfile')}
-        - Exclusions: {icp.get('exclusions')}
         
-        Analyze relevance for: {json.dumps(batch_info)}
-        Respond ONLY with a JSON object:
-        {{"results": [{{"username": "...", "match": true/false, "reasoning": "...", "creator_info": "..."}}]}}
-        """
+        # Build geo instruction for browser leads too
+        geo_target = icp.get('geoTarget', '')
+        geo_instruction_browser = ""
+        if geo_target and geo_target.strip().lower() not in ("", "global", "worldwide", "any"):
+            geo_instruction_browser = f"""\n\nGEO TARGETING (IMPORTANT):
+- Target geography: {geo_target}
+- For each profile, estimate their likely country based on their username, full name, bio language, and content.
+- ONLY mark as match if they are likely based in or relevant to: {geo_target}
+- Include your estimated country in the response."""
+        else:
+            geo_instruction_browser = """\n\nCOUNTRY ESTIMATION:
+- For each matched profile, estimate their likely country based on their username, full name, bio, and content.
+- Use naming patterns (e.g., "raj_sharma" -> India, "john_smith" -> US/UK, "sakura_chan" -> Japan)."""
+        
+        prompt = f"""You are a lead qualification expert for an Instagram outreach campaign.
+
+Campaign Target Settings:
+- Industry: {icp.get('industry')}
+- Niche: {niche}
+- Target Profile: {icp.get('targetProfile')}
+- Focus: {icp.get('focus')}
+- Exclusions: {icp.get('exclusions')}
+- Content Type: {icp.get('contentType', 'any')}
+
+Item being sold: {state.get('item_profile', {}).get('item_to_sell', 'N/A')}
+Target audience: {state.get('item_profile', {}).get('target_audience', 'N/A')}
+{geo_instruction_browser}
+
+Analyze ALL {len(batch_info)} profiles below and determine which are strong matches for this campaign.
+For each match, provide a short creator_info, reasoning, and estimated_country.
+
+Profiles:
+{json.dumps(batch_info)}
+
+Respond ONLY with a JSON object:
+{{"results": [{{"username": "...", "match": true/false, "reasoning": "...", "creator_info": "...", "estimated_country": "Country Name"}}]}}"""
+        
         batch_verdict = invoke_llm_with_retry(prompt)
         
         if batch_verdict and "results" in batch_verdict:
@@ -1063,24 +1309,50 @@ def validation_node(state: InstagramAgentState):
                 if res.get("match"):
                     username = res.get("username", "").replace("@", "")
                     profile = next((p for p in batch if p['username'].lower() == username.lower()), None)
-                    if profile:
+                    if profile and username.lower() not in existing_usernames:
+                        estimated_country = res.get("estimated_country", "")
                         validated_leads.append({
                             "username": profile["username"],
                             "creator_info": res.get("creator_info", ""),
                             "reasoning": res.get("reasoning", ""),
                             "posts": profile.get("posts", []),
+                            "followers": profile.get("followers", 0),
+                            "bio": profile.get("bio", ""),
+                            "geo_country": estimated_country or profile.get("geo_country", ""),
                             "found": True
                         })
-                        print(f"[+] Lead Verified: @{profile['username']}")
-            
-    return {"staged_leads": validated_leads}
+                        existing_usernames.add(username.lower())
+                        print(f"[+] Campaign Lead Verified: @{profile['username']} (country={estimated_country})")
+        else:
+            # LLM failed - add all batch profiles as leads (fallback)
+            print(f"[-] LLM validation failed for batch. Adding all {len(batch)} profiles as fallback.")
+            for p in batch:
+                username = p.get("username", "")
+                if username.lower() not in existing_usernames:
+                    validated_leads.append({
+                        "username": username,
+                        "creator_info": p.get("bio", ""),
+                        "reasoning": f"Browser-discovered in {niche} niche (LLM fallback)",
+                        "posts": p.get("posts", []),
+                        "followers": p.get("followers", 0),
+                        "bio": p.get("bio", ""),
+                        "found": True
+                    })
+                    existing_usernames.add(username.lower())
+    
+    print(f"[+] TIER 1: {len(eligible_profiles)} profiles catalogued to DB")
+    print(f"[+] TIER 2: {len(validated_leads)} campaign leads validated by LLM")
+    return {"staged_leads": validated_leads, "catalogue_profiles": eligible_profiles}
 
 def export_node(state: InstagramAgentState):
-    """Pushes leads to global state/storage."""
-    print("\n--- [Node] Exporting Leads ---")
+    """Pushes leads to global state/storage and saves them to Supabase database."""
+    print("\n--- [Node] Exporting Leads to database storage ---")
     leads = state.get('staged_leads', [])
+    campaign_id = state.get('icp', {}).get('campaignId')
+    niche = state.get('niche', '')
+    
     if leads:
-        push_leads(leads)
+        push_leads(leads, campaign_id, niche=niche)
     return {}
 
 # --- Graph Assembly ---
@@ -1088,21 +1360,41 @@ def export_node(state: InstagramAgentState):
 def create_instagram_graph():
     workflow = StateGraph(InstagramAgentState)
     
-    workflow.add_node("init", init_node)
+    # Phase 1: Derive niche from ICP and search DB
+    workflow.add_node("derive_niche", derive_niche_node)
+    workflow.add_node("db_search", db_search_node)
+    workflow.add_node("llm_filter_db", llm_filter_db_leads_node)
+    
+    # Phase 2: Browser search (conditional - only if more leads needed)
+    workflow.add_node("init_browser", init_node)
     workflow.add_node("gen_hashtags", generate_hashtags_node)
     workflow.add_node("search", hashtag_search_node)
-    workflow.add_node("filter", filter_profiles_node)
+    workflow.add_node("collect_profiles", collect_browser_profiles_node)
     workflow.add_node("enrich", enrichment_node)
-    workflow.add_node("validate", validation_node)
+    workflow.add_node("catalogue_validate", catalogue_and_validate_node)
+    
+    # Phase 3: Export
     workflow.add_node("export", export_node)
     
-    workflow.set_entry_point("init")
-    workflow.add_edge("init", "gen_hashtags")
+    # Flow: derive_niche -> db_search -> llm_filter_db -> (conditional)
+    workflow.set_entry_point("derive_niche")
+    workflow.add_edge("derive_niche", "db_search")
+    workflow.add_edge("db_search", "llm_filter_db")
+    
+    # Conditional: if enough leads from DB, skip browser; otherwise init browser
+    workflow.add_conditional_edges("llm_filter_db", should_browser_search, {
+        "init_browser": "init_browser",
+        "export": "export"
+    })
+    
+    # Browser search path
+    workflow.add_edge("init_browser", "gen_hashtags")
     workflow.add_edge("gen_hashtags", "search")
-    workflow.add_edge("search", "filter")
-    workflow.add_edge("filter", "enrich")
-    workflow.add_edge("enrich", "validate")
-    workflow.add_edge("validate", "export")
+    workflow.add_edge("search", "collect_profiles")
+    workflow.add_edge("collect_profiles", "enrich")
+    workflow.add_edge("enrich", "catalogue_validate")
+    workflow.add_edge("catalogue_validate", "export")
+    
     workflow.add_edge("export", END)
     
     return workflow.compile()
@@ -1118,7 +1410,7 @@ def main():
         "exclusions": "No students, no crypto",
         "minEngagement": "2%",
         "contentType": "Product Demos",
-        "target_lead_count": 20
+        "target_lead_count": 5
     }
     
     item_profile = {
@@ -1128,12 +1420,17 @@ def main():
 
     initial_state = {
         "icp": icp,
+        "niche": "",
         "item_profile": item_profile,
         "hashtags": [],
         "discovered_posts": [],
         "usernames_to_enrich": [],
         "profiles_data": [],
         "staged_leads": [],
+        "catalogue_profiles": [],
+        "db_leads": [],
+        "needs_browser_search": True,
+        "target_lead_count": icp.get("target_lead_count", 10),
         "error": None
     }
 

@@ -1,6 +1,6 @@
 {
     "username": "bigdaddysoham",
-    "last_login": "2026-05-13T20:40:35.660444",
+    "last_login": "2026-07-31T00:28:12.297508",
     "storage_state": {
         "cookies": [
             {
@@ -8,7 +8,7 @@
                 "value": "G2ZJyTByllvY2r0QhgpAPl",
                 "domain": ".instagram.com",
                 "path": "/",
-                "expires": 1813245024.881081,
+                "expires": 1819997882.200799,
                 "httpOnly": false,
                 "secure": true,
                 "sameSite": "Lax"
@@ -48,7 +48,7 @@
                 "value": "20418456832",
                 "domain": ".instagram.com",
                 "path": "/",
-                "expires": 1786461024.881391,
+                "expires": 1793213882.200924,
                 "httpOnly": false,
                 "secure": true,
                 "sameSite": "None"
@@ -59,26 +59,6 @@
                 "domain": ".instagram.com",
                 "path": "/",
                 "expires": 1809202313.249112,
-                "httpOnly": true,
-                "secure": true,
-                "sameSite": "None"
-            },
-            {
-                "name": "wd",
-                "value": "1280x720",
-                "domain": ".instagram.com",
-                "path": "/",
-                "expires": 1779289826,
-                "httpOnly": false,
-                "secure": true,
-                "sameSite": "Lax"
-            },
-            {
-                "name": "fr",
-                "value": "0N5CWwhZgdtq4iwM0.AWdbHJzQxPKmv4pl7FxZ3igBGXNd5CsuHumrXV1Yhis_2AaQEmo.Bp9QkW..AAA.0.0.BqBDcC.AWeNPJogDbOvPgFQs7g51bXc_TM",
-                "domain": ".facebook.com",
-                "path": "/",
-                "expires": 1786437116.742535,
                 "httpOnly": true,
                 "secure": true,
                 "sameSite": "None"
@@ -104,8 +84,38 @@
                 "sameSite": "None"
             },
             {
+                "name": "wd",
+                "value": "1280x720",
+                "domain": ".instagram.com",
+                "path": "/",
+                "expires": 1786042683,
+                "httpOnly": false,
+                "secure": true,
+                "sameSite": "Lax"
+            },
+            {
+                "name": "test_cookie",
+                "value": "CheckForPermission",
+                "domain": ".doubleclick.net",
+                "path": "/",
+                "expires": 1785438778.124865,
+                "httpOnly": false,
+                "secure": true,
+                "sameSite": "None"
+            },
+            {
+                "name": "fr",
+                "value": "0N5CWwhZgdtq4iwM0.AWdhG-owJqzQ6P4t1IaeVKgHSTw5E4xXQkUh4-iADx6dOrchlCk.Bp9QkW..AAA.0.0.Bqa573.AWfQTonpVn7_Lv42jy7KSSgVpdo",
+                "domain": ".facebook.com",
+                "path": "/",
+                "expires": 1793213880.966495,
+                "httpOnly": true,
+                "secure": true,
+                "sameSite": "None"
+            },
+            {
                 "name": "rur",
-                "value": "\"LDC\\05420418456832\\0541810221030:01fe7b151b107cb7d2d2d693813df8f2a151e4f581be4c4c8b1fca2ac222a948828df18c\"",
+                "value": "CCO%2C17841420424962307%2C1786647553%3A01ff331bae14d526dc0ac5c6496ba6b0164f40fd2578d8bfaf9a13cd758951ae1717ba41",
                 "domain": ".instagram.com",
                 "path": "/",
                 "expires": -1,
@@ -120,31 +130,31 @@
                 "localStorage": [
                     {
                         "name": "ig_notifications_sessions_dismiss",
-                        "value": "{\"currentSessionNumber\":2,\"lastDismissedDate\":\"Wed May 13 2026 14:01:47 GMT+0530 (India Standard Time)\"}"
+                        "value": "{\"currentSessionNumber\":3,\"lastDismissedDate\":\"Fri Jul 31 2026 00:27:53 GMT+0530 (India Standard Time)\"}"
                     },
                     {
                         "name": "chatd-deviceid",
-                        "value": "e93e6875-c774-4a6c-a607-4335224c1044"
+                        "value": "bac28600-28c3-4731-acf9-07c19509e49f"
                     },
                     {
                         "name": "IGSession",
-                        "value": "fcml3i:1778686827385"
+                        "value": "u0q1qn:1785439686170"
                     },
                     {
                         "name": "pigeon_state",
-                        "value": "{\"lastDeviceInfoTime\":1778661113245}"
+                        "value": "{\"lastDeviceInfoTime\":1785437877196}"
                     },
                     {
                         "name": "fr",
-                        "value": "AVjM7ZtjbdL-759PM06F8AcBqVq61Q4NCdyDD4PSB2g69dwmfjR_vhiy8j4JdUpYAFmwFEJ0mHJz4TOgcKZFQQ6d1JLW5PTVAma9-Xgo6rJ5Z0lP25BtRymvHEml7g"
+                        "value": "AVgEbttduE_IUBVtxfFyF79I9dEoYKQZr1cLoMTcG-UV9S5zYjbkTF_dJpSs_xS2RfZwt3BjI_tao91Z8-NCFT9guDI5PK2g9xGhXJPnJCwJ-VUhAUomhrVtQAJ2MS4"
                     },
                     {
                         "name": "pixel_fire_ts",
-                        "value": "1778323965176"
+                        "value": "1785437876583"
                     },
                     {
                         "name": "Session",
-                        "value": "j6ae1e:1778685062108"
+                        "value": "3jfi3y:1785437921170"
                     },
                     {
                         "name": "_oz_bandwidthEstimate",
@@ -152,7 +162,7 @@
                     },
                     {
                         "name": "banzai:last_storage_flush",
-                        "value": "1778661108110.0999"
+                        "value": "1785437874256.8"
                     },
                     {
                         "name": "caa_feta_onetap_users_migrated",
@@ -160,7 +170,7 @@
                     },
                     {
                         "name": "hb_timestamp",
-                        "value": "1778683964783"
+                        "value": "1785437876144"
                     },
                     {
                         "name": "_oz_bandwidthAndTTFBSamples",
@@ -168,7 +178,7 @@
                     },
                     {
                         "name": "signal_flush_timestamp",
-                        "value": "1778683964812"
+                        "value": "1785437876167"
                     }
                 ]
             },
@@ -177,7 +187,7 @@
                 "localStorage": [
                     {
                         "name": "_gcl_ls",
-                        "value": "{\"schema\":\"gcl\",\"version\":1,\"gcl_ctr\":{\"value\":{\"value\":0,\"timeouts\":0,\"errors\":0,\"eopCount\":0,\"creationTimeMs\":1778323967961},\"expires\":1786099967961}}"
+                        "value": "{\"schema\":\"gcl\",\"version\":1,\"gsid_dc\":{\"value\":{\"joinId\":\"lCsCjUryglvcsVRKDgrXgTQ15V_hI6Ej4Q\",\"lastJoinedTimeMs\":1785437877748},\"expires\":1785438177748},\"gcl_ctr\":{\"value\":{\"value\":0,\"timeouts\":0,\"errors\":0,\"eopCount\":0,\"creationTimeMs\":1785437877999},\"expires\":1793213877999}}"
                     }
                 ]
             },
@@ -210,7 +220,7 @@
                     },
                     {
                         "name": "Session",
-                        "value": "9pcxh5:1778685065399"
+                        "value": "i0iamm:1785437922127"
                     },
                     {
                         "name": "falco_queue_log^$^$fa83a35b8acdc1f5e",
@@ -219,6 +229,10 @@
                     {
                         "name": "falco_queue_log^$^$fdeff19c4edadcc8b",
                         "value": "{\"items\":[{\"name\":\"jstl_migration\",\"policy\":{\"r\":1},\"time\":1778683975617.4,\"extra\":\"{\\\"logger_config_name\\\":\\\"InstagramLoginSyncJSCookieDebugLoggerConfig\\\",\\\"payload\\\":{\\\"session_key\\\":\\\"4a29b977-b9c9-4e85-87a7-d20446f1a7ef\\\",\\\"__options\\\":{\\\"event_time\\\":1778683969.453}}}\",\"tags\":[1,128],\"sessionId\":\"17zyvw:0y4qnw:zfwk7k\",\"deviceId\":\"fd.ARu6-vw4UKptPE2H9ZjyDbNtxlA016QtVUfLqnwwmXJlfWB5W2WuF44FkWlO-AeHMwJ-c9uCjjAXNHoiV14FX4p2\",\"appVersion\":\"1039.410.630.0 (1039410630)\"}],\"ts\":1778683970817}"
+                    },
+                    {
+                        "name": "falco_queue_log^$^$fdd28be22bf9cdbfc",
+                        "value": "{\"items\":[{\"name\":\"jstl_migration\",\"policy\":{\"r\":1},\"time\":1785437942967.7998,\"extra\":\"{\\\"logger_config_name\\\":\\\"InstagramLoginSyncJSCookieDebugLoggerConfig\\\",\\\"payload\\\":{\\\"session_key\\\":\\\"6bb246ca-0051-4c62-b278-9d8bd281ab67\\\",\\\"__options\\\":{\\\"event_time\\\":1785437880.37}}}\",\"tags\":[1,128],\"sessionId\":\"i0iamm:j9gszq:b63bgz\",\"deviceId\":\"fd.ARtchaamqhNwak3D1J2R1hkwhG2h-Tcog7SKvzJ0xBe-KWe0aDkOUFGyYoQQOWOGYZGlBTmlerYKO7zDkv1jXJLb\",\"appVersion\":\"1044.165.744.0 (1044165744)\"}],\"ts\":1785437881218.5}"
                     },
                     {
                         "name": "falco_queue_log^$^$f00e843d7bdbeb3b2",

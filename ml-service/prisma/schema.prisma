@@ -1,5 +1,10 @@
+// This is your Prisma schema file for ml-service,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
-  provider = "prisma-client-js"
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  engineType           = "binary"
 }
 
 datasource db {
