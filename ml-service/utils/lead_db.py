@@ -186,13 +186,21 @@ async def save_leads_to_supabase(leads: List[Dict[str, Any]], campaign_id: Optio
             
             # Connect to campaign_leads if campaign_id is provided
             if campaign_id and lead_uuid:
-                upsert_campaign_lead_query = """
-                INSERT INTO campaign_leads (campaign_id, lead_id, icp_score, status)
-                VALUES ($1, $2::uuid, 1.0, 'staged')
-                ON CONFLICT (campaign_id, lead_id) DO UPDATE SET
-                    status = 'staged';
-                """
-                await db.execute_raw(upsert_campaign_lead_query, campaign_id, lead_uuid)
+                try:
+                    # Verify campaign exists first to avoid FK violation
+                    check_camp = await db.query_raw("SELECT id FROM campaigns WHERE id = $1 LIMIT 1;", campaign_id)
+                    if check_camp:
+                        upsert_campaign_lead_query = """
+                        INSERT INTO campaign_leads (campaign_id, lead_id, icp_score, status)
+                        VALUES ($1, $2::uuid, 1.0, 'staged')
+                        ON CONFLICT (campaign_id, lead_id) DO UPDATE SET
+                            status = 'staged';
+                        """
+                        await db.execute_raw(upsert_campaign_lead_query, campaign_id, lead_uuid)
+                    else:
+                        print(f"[!] Campaign '{campaign_id}' not found in DB. Skipping campaign_leads linking.")
+                except Exception as fk_err:
+                    print(f"[-] FK assignment error for campaign '{campaign_id}': {fk_err}")
                 
             print(f"[+] Saved/Updated lead @{username} on {platform} (country={geo_country}, niche={niche_tags}) in Supabase.")
             
@@ -202,7 +210,7 @@ async def save_leads_to_supabase(leads: List[Dict[str, Any]], campaign_id: Optio
     except Exception as e:
         print(f"[-] Error saving leads to Supabase: {e}")
 
-async def search_existing_leads_by_niche(icp: Dict[str, Any], niche: str = "", limit: int = 10, geo_target: str = "", platform: str = "instagram") -> List[Dict[str, Any]]:
+async def search_existing_leads_by_niche(icp: Dict[str, Any], niche: str = "", limit: int = 10, geo_target: str = "", platform: str = "instagram", campaign_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Searches Supabase for existing leads using a combined approach:
     1. Niche-based text search (ILIKE on profile content)
@@ -214,6 +222,23 @@ async def search_existing_leads_by_niche(icp: Dict[str, Any], niche: str = "", l
     """
     matched_leads = []
     seen_handles = set()
+    
+    # Exclude leads already linked to this campaign if campaign_id is provided
+    already_in_campaign = set()
+    if campaign_id:
+        try:
+            db_temp = Prisma()
+            await db_temp.connect()
+            existing_cl = await db_temp.query_raw(
+                "SELECT l.handle FROM campaign_leads cl JOIN leads l ON cl.lead_id = l.id WHERE cl.campaign_id = $1;",
+                campaign_id
+            )
+            for item in existing_cl:
+                if item.get("handle"):
+                    already_in_campaign.add(item.get("handle").lower())
+            await db_temp.disconnect()
+        except Exception as err:
+            print(f"[-] Error fetching existing campaign leads: {err}")
     
     # Determine if geo filtering should be applied
     apply_geo_filter = bool(geo_target and geo_target.strip().lower() not in ("", "global", "worldwide", "any"))
@@ -261,7 +286,7 @@ async def search_existing_leads_by_niche(icp: Dict[str, Any], niche: str = "", l
                 
                 for item in raw_niche_results:
                     handle = item.get("handle")
-                    if handle and handle.lower() not in seen_handles:
+                    if handle and handle.lower() not in seen_handles and handle.lower() not in already_in_campaign:
                         seen_handles.add(handle.lower())
                         profile_data = item.get("profile") or {}
                         matched_leads.append({
@@ -303,7 +328,7 @@ async def search_existing_leads_by_niche(icp: Dict[str, Any], niche: str = "", l
             for item in raw_vec_results:
                 handle = item.get("handle")
                 distance = item.get("distance", 1.0)
-                if handle and handle.lower() not in seen_handles and distance < 0.85:
+                if handle and handle.lower() not in seen_handles and handle.lower() not in already_in_campaign and distance < 0.85:
                     seen_handles.add(handle.lower())
                     profile_data = item.get("profile") or {}
                     matched_leads.append({
@@ -406,10 +431,10 @@ def search_existing_leads_sync(icp: Dict[str, Any], target_handles: Optional[Lis
     with ThreadPoolExecutor(max_workers=1) as executor:
         return executor.submit(lambda: asyncio.run(search_existing_leads_db(icp, target_handles, limit, platform))).result()
 
-def search_existing_leads_by_niche_sync(icp: Dict[str, Any], niche: str = "", limit: int = 10, geo_target: str = "", platform: str = "instagram") -> List[Dict[str, Any]]:
+def search_existing_leads_by_niche_sync(icp: Dict[str, Any], niche: str = "", limit: int = 10, geo_target: str = "", platform: str = "instagram", campaign_id: Optional[str] = None) -> List[Dict[str, Any]]:
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=1) as executor:
-        return executor.submit(lambda: asyncio.run(search_existing_leads_by_niche(icp, niche, limit, geo_target, platform))).result()
+        return executor.submit(lambda: asyncio.run(search_existing_leads_by_niche(icp, niche, limit, geo_target, platform, campaign_id))).result()
 
 def save_leads_to_supabase_sync(leads: List[Dict[str, Any]], campaign_id: Optional[str] = None, niche: str = "", platform: str = "instagram"):
     from concurrent.futures import ThreadPoolExecutor

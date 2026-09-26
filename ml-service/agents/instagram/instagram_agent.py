@@ -20,6 +20,7 @@ import operator
 # --- Add parent path to import utils ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils.lead_db import search_existing_leads_sync, save_leads_to_supabase_sync, search_existing_leads_by_niche_sync, save_profiles_to_catalogue_sync
+from utils.llm import get_groq_llm
 
 # --- Global Storage for Intercepted Data ---
 INTERCEPTED_DATA = []
@@ -36,6 +37,7 @@ BROWSER_LOCK = threading.Lock()
 
 # --- LangGraph State Definition ---
 class InstagramAgentState(TypedDict):
+    campaign_id: Optional[str] # Campaign UUID for Supabase linkage
     icp: Dict[str, Any] # Contains campaign inputs: industry, targetProfile, focus, etc.
     niche: str # Derived from ICP - used for DB search and hashtag generation
     item_profile: Dict[str, Any]
@@ -60,8 +62,8 @@ def _get_page():
         try:
             _thread_local.page.url
             return _thread_local.page
-        except:
-            pass
+        except Exception:
+            _thread_local.page = None
 
     # Main thread can use the global handle
     if threading.get_ident() == _main_thread_id:
@@ -70,18 +72,15 @@ def _get_page():
                 page.url
                 _thread_local.page = page
                 return page
-            except:
+            except Exception:
                 pass
 
     # All other threads (or main thread if global is missing) connect via CDP
     try:
         from playwright.sync_api import sync_playwright
-        if not hasattr(_thread_local, "playwright"):
-            # Start a separate playwright instance for this thread
+        if not hasattr(_thread_local, "playwright") or not _thread_local.playwright:
             _thread_local.playwright = sync_playwright().start()
         
-        # Connect to the browser started in launch_browser (port 9222)
-        # Using a small timeout for the connection
         browser = _thread_local.playwright.chromium.connect_over_cdp("http://localhost:9222", timeout=10000)
         _thread_local.browser = browser
         
@@ -98,8 +97,12 @@ def _get_page():
         return _thread_local.page
     except Exception as e:
         print(f"[-] Thread {threading.get_ident()} failed to connect via CDP: {e}")
-        # If we are in main thread, maybe we haven't set _main_thread_id yet
-        if page: return page
+        if page:
+            try:
+                page.url
+                return page
+            except Exception:
+                pass
         raise e
 
 def _get_context():
@@ -168,7 +171,7 @@ class Lead(BaseModel):
     posts: List[Dict[str, Any]] = Field(..., description="Array of recent posts with url and media_url.")
     found: bool = Field(True, description="Whether the profile was successfully analyzed.")
 
-def push_leads(leads: List[Dict[str, Any]]):
+def push_staged_leads_tool(leads: List[Dict[str, Any]]):
     """
     Pushes a list of analyzed leads to the global staging area.
     This should be called after you have investigated profiles using search_profile()
@@ -556,9 +559,12 @@ def search_hashtag(hashtag: str):
         INTERCEPTED_DATA = [] # Clear previous results
     
     print(f"Searching for hashtag: #{hashtag}")
-    # revert to explore/tags which the user says was working
-    page.goto(f"https://www.instagram.com/explore/tags/{hashtag}/")
-    
+    # revert to explore/tags with domcontentloaded wait_until and timeout protection
+    try:
+        page.goto(f"https://www.instagram.com/explore/tags/{hashtag}/", wait_until="domcontentloaded", timeout=20000)
+    except Exception as goto_err:
+        print(f"[!] Warning: page.goto for #{hashtag} timed out or threw warning: {goto_err}. Continuing with DOM/interception...")
+
     try:
         # Wait for initial load
         post_item_selector = context['selectors']['navigation'].get('search_results_item', "a[href*='/p/'], a[href*='/reel/']")
@@ -654,7 +660,10 @@ def search_profile(usernames: List[str]):
             print(f"[+] Navigating to profile: @{username}")
             INTERCEPTED_DATA = [] # Clear for each user 
             try:
-                page.goto(f"https://www.instagram.com/{username}/")
+                try:
+                    page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded", timeout=20000)
+                except Exception as goto_err:
+                    print(f"[!] Warning: page.goto for @{username} timed out or threw warning ({goto_err}). Continuing...")
                 
                 # Wait for data to be intercepted
                 print(f"[+] Waiting for @{username} data...")
@@ -693,27 +702,41 @@ def launch_browser():
     """
     Launches browser and automatically completes authentication + session saving
     and navigates to instagram
-
     """
     with BROWSER_LOCK:
         global page, browser_context, playwright_instance, _main_thread_id
-        _main_thread_id = threading.get_ident() # Store the main thread id
+        _main_thread_id = threading.get_ident() # Store current thread id
         email = os.getenv("INSTAGRAM_EMAIL")
-    password = os.getenv("INSTAGRAM_PASSWORD")
+        password = os.getenv("INSTAGRAM_PASSWORD")
 
-    if not email or not password:
-        print("Error: INSTAGRAM_EMAIL and INSTAGRAM_PASSWORD env variables must be set.")
-        return
+        if not email or not password:
+            print("Error: INSTAGRAM_EMAIL and INSTAGRAM_PASSWORD env variables must be set.")
+            return
 
-    if not playwright_instance:
+        # Stop existing playwright instance if initialized from a dead thread
+        if playwright_instance is not None:
+            try:
+                playwright_instance.stop()
+            except Exception:
+                pass
+            playwright_instance = None
+
         from playwright.sync_api import sync_playwright
-        playwright_instance = sync_playwright().start()
-
-    browser = playwright_instance.chromium.launch(
-        channel="chrome",
-        headless=False,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--remote-debugging-port=9222"],
-    )
+        try:
+            playwright_instance = sync_playwright().start()
+            browser = playwright_instance.chromium.launch(
+                channel="chrome",
+                headless=False,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--remote-debugging-port=9222"],
+            )
+        except Exception as e:
+            print(f"[-] Initial playwright launch attempt failed ({e}). Retrying fresh instance...")
+            playwright_instance = sync_playwright().start()
+            browser = playwright_instance.chromium.launch(
+                channel="chrome",
+                headless=False,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--remote-debugging-port=9222"],
+            )
     
     session_data = load_session()
     storage_state = session_data.get("storage_state") if session_data else None
@@ -725,7 +748,10 @@ def launch_browser():
     )
     
     page = browser_context.pages[0] if browser_context.pages else browser_context.new_page()
-    page.goto("https://www.instagram.com")
+    try:
+        page.goto("https://www.instagram.com", wait_until="domcontentloaded", timeout=20000)
+    except Exception as goto_err:
+        print(f"[!] Warning: page.goto instagram home took longer than 20s ({goto_err}). Continuing...")
     page.on("response", handle_response)
 
     print("Checking session validity...")
@@ -849,22 +875,26 @@ def sleep(seconds: int):
     """
     time.sleep(seconds)
 
-llm = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0,
-    model_kwargs={"response_format": {"type": "json_object"}}
-)
+def get_instagram_llm():
+    try:
+        return get_groq_llm(temperature=0.0)
+    except Exception as e:
+        print(f"[-] Instagram LLM initialization error: {e}")
+        return None
 
 def invoke_llm_with_retry(prompt: str, max_retries: int = 3) -> Optional[Dict[str, Any]]:
     """Invokes LLM with retries and robust JSON extraction."""
+    llm_inst = get_instagram_llm()
+    if not llm_inst:
+        return None
     for i in range(max_retries):
         try:
             # Add a small delay between retries
             if i > 0:
                 time.sleep(random.uniform(1.0, 3.0))
                 
-            response = llm.invoke(prompt)
-            content = response.content.strip()
+            response = llm_inst.invoke(prompt)
+            content = response.content.strip() if hasattr(response, 'content') else str(response).strip()
             
             if not content:
                 print(f"[-] Attempt {i+1}: Received empty response from LLM.")
@@ -900,6 +930,7 @@ def derive_niche_node(state: InstagramAgentState):
     print("\n--- [Node] Deriving Niche from ICP ---")
     icp = state.get('icp', {})
     target_count = icp.get("target_lead_count", 10)
+    campaign_id = state.get("campaign_id") or icp.get("campaignId") or icp.get("campaign_id")
     
     # Build niche string from ICP fields
     industry = icp.get("industry", "")
@@ -909,8 +940,8 @@ def derive_niche_node(state: InstagramAgentState):
     if not niche:
         niche = "lifestyle"
     
-    print(f"[+] Agent niche set to: '{niche}'")
-    return {"niche": niche, "target_lead_count": target_count}
+    print(f"[+] Agent niche set to: '{niche}' | Campaign ID: {campaign_id}")
+    return {"niche": niche, "target_lead_count": target_count, "campaign_id": campaign_id}
 
 def db_search_node(state: InstagramAgentState):
     """
@@ -926,10 +957,11 @@ def db_search_node(state: InstagramAgentState):
     niche = state.get('niche', '')
     target_count = state.get('target_lead_count', 10)
     geo_target = icp.get('geoTarget', '')
+    campaign_id = state.get("campaign_id") or icp.get("campaignId") or icp.get("campaign_id")
     
     # Search with a higher limit so LLM can filter down
     search_limit = target_count * 3
-    cached_leads = search_existing_leads_by_niche_sync(icp, niche=niche, limit=search_limit, geo_target=geo_target)
+    cached_leads = search_existing_leads_by_niche_sync(icp, niche=niche, limit=search_limit, geo_target=geo_target, campaign_id=campaign_id)
     
     if cached_leads:
         for lead in cached_leads:
@@ -1030,11 +1062,16 @@ Respond ONLY with a JSON object: {{"selected": [{{"username": "handle1", "estima
                 estimated_country = selected_map[lead_username]
                 if estimated_country and not lead.get("geo_country"):
                     lead["geo_country"] = estimated_country
+                lead["reasoning"] = f"[LLM Verified] Strong match for target profile & niche '{niche}'"
                 selected_leads.append(lead)
-        print(f"[+] LLM selected {len(selected_leads)} leads from DB cache")
+                print(f"  [✓ LLM Approved] @{lead.get('username')} (geo={estimated_country or 'Global'})")
+        print(f"[+] LLM selected {len(selected_leads)}/{len(db_leads)} leads from DB cache")
     else:
-        print("[-] LLM filter failed, using all DB leads as fallback")
-        selected_leads = db_leads
+        # LLM filter failed - cap fallback leads to top 5 sorted by followers
+        selected_leads = sorted(db_leads, key=lambda x: x.get("followers", 0) or 0, reverse=True)[:min(target_count, 5)]
+        for lead in selected_leads:
+            lead["reasoning"] = f"[LLM Filter Fallback] Selected top follower lead from DB"
+        print(f"[-] LLM filter failed, using top {len(selected_leads)} DB leads (capped at 5) as fallback")
     
     needs_more = len(selected_leads) < target_count
     if needs_more:
@@ -1125,18 +1162,19 @@ def collect_browser_profiles_node(state: InstagramAgentState):
     existing_leads = list(state.get('staged_leads', []))
     existing_usernames = {l.get('username', '').lower() for l in existing_leads}
     
-    # Extract unique usernames from discovered posts
+    # Extract unique usernames from discovered posts (exclude already searched / campaign handles)
     seen = set()
     usernames_to_enrich = []
     for p in discovered:
         username = p.get("username", "")
-        if username and username.lower() not in seen and username.lower() not in existing_usernames:
-            seen.add(username.lower())
+        u_lower = username.lower()
+        if username and u_lower not in seen and u_lower not in existing_usernames and u_lower not in SEARCHED_USERNAMES:
+            seen.add(u_lower)
             usernames_to_enrich.append(username)
     
     # Limit to top 25 for enrichment
     usernames_to_enrich = usernames_to_enrich[:25]
-    print(f"[+] Will enrich {len(usernames_to_enrich)} browser-discovered profiles")
+    print(f"[+] Will enrich {len(usernames_to_enrich)} new browser-discovered profiles (skipped duplicates)")
     return {"usernames_to_enrich": usernames_to_enrich}
 
 def enrichment_node(state: InstagramAgentState):
@@ -1244,28 +1282,27 @@ def catalogue_and_validate_node(state: InstagramAgentState):
     save_profiles_to_catalogue_sync(eligible_profiles, niche=niche)
     
     # --- TIER 2: LLM validates which become campaign leads ---
-    # Llama 3.1 8B has 128K context. Each profile ~150-200 tokens.
-    # We can safely batch ~40 profiles per call.
+    # To avoid Groq/LLM context_length_exceeded errors (BadRequestError 400),
+    # use a compact batch size (5 profiles per call) and trim payload sizes.
     print(f"[*] TIER 2: LLM validating campaign leads from {len(eligible_profiles)} profiles...")
     
-    BATCH_SIZE = 40  # Maximized for 128K context window
+    BATCH_SIZE = 5  # Small batch size to guarantee context length compliance
     
-    for i in range(0, len(eligible_profiles), BATCH_SIZE):
-        batch = eligible_profiles[i:i + BATCH_SIZE]
-        print(f"[*] Validating batch {i//BATCH_SIZE + 1} ({len(batch)} profiles)...")
-        
+    def validate_batch(batch_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Helper to construct prompt and invoke LLM for a list of profiles."""
+        if not batch_list:
+            return None
         batch_info = []
-        for p in batch:
+        for p in batch_list:
             posts = p.get("posts", [])
-            post_summaries = [{"caption": post.get("caption", "")[:100], "likes": post.get("likes", 0)} for post in posts[:3]] if posts else []
+            post_summaries = [{"caption": (post.get("caption") or "")[:60], "likes": post.get("likes", 0)} for post in posts[:2]] if posts else []
             batch_info.append({
                 "username": p["username"],
-                "bio": (p.get("bio") or "")[:300],
+                "bio": (p.get("bio") or "")[:150],
                 "followers": p.get("followers", 0),
                 "posts": post_summaries
             })
         
-        # Build geo instruction for browser leads too
         geo_target = icp.get('geoTarget', '')
         geo_instruction_browser = ""
         if geo_target and geo_target.strip().lower() not in ("", "global", "worldwide", "any"):
@@ -1301,8 +1338,27 @@ Profiles:
 
 Respond ONLY with a JSON object:
 {{"results": [{{"username": "...", "match": true/false, "reasoning": "...", "creator_info": "...", "estimated_country": "Country Name"}}]}}"""
+        return invoke_llm_with_retry(prompt)
+
+    total_batches = (len(eligible_profiles) + BATCH_SIZE - 1) // BATCH_SIZE
+    for i in range(0, len(eligible_profiles), BATCH_SIZE):
+        batch = eligible_profiles[i:i + BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
+        print(f"[*] Validating batch {batch_num}/{total_batches} ({len(batch)} profiles)...")
         
-        batch_verdict = invoke_llm_with_retry(prompt)
+        batch_verdict = validate_batch(batch)
+        
+        # If main batch fails, attempt sub-batching with smaller mini-batches (size 2)
+        if not batch_verdict or "results" not in batch_verdict:
+            print(f"[!] Main batch {batch_num} failed. Retrying with mini-batches of size 2...")
+            combined_results = []
+            for sub_i in range(0, len(batch), 2):
+                sub_batch = batch[sub_i:sub_i + 2]
+                sub_verdict = validate_batch(sub_batch)
+                if sub_verdict and "results" in sub_verdict:
+                    combined_results.extend(sub_verdict["results"])
+            if combined_results:
+                batch_verdict = {"results": combined_results}
         
         if batch_verdict and "results" in batch_verdict:
             for res in batch_verdict["results"]:
@@ -1324,15 +1380,17 @@ Respond ONLY with a JSON object:
                         existing_usernames.add(username.lower())
                         print(f"[+] Campaign Lead Verified: @{profile['username']} (country={estimated_country})")
         else:
-            # LLM failed - add all batch profiles as leads (fallback)
-            print(f"[-] LLM validation failed for batch. Adding all {len(batch)} profiles as fallback.")
-            for p in batch:
+            # LLM failed completely - limit fallback to top 5 profiles by follower count
+            unvalidated = [p for p in batch if p.get("username", "").lower() not in existing_usernames]
+            fallback_top5 = sorted(unvalidated, key=lambda x: x.get("followers", 0) or 0, reverse=True)[:5]
+            print(f"[-] LLM validation failed for batch {batch_num}. Pushing only top {len(fallback_top5)} profiles (capped at top 5) as fallback.")
+            for p in fallback_top5:
                 username = p.get("username", "")
                 if username.lower() not in existing_usernames:
                     validated_leads.append({
                         "username": username,
-                        "creator_info": p.get("bio", ""),
-                        "reasoning": f"Browser-discovered in {niche} niche (LLM fallback)",
+                        "creator_info": (p.get("bio") or "")[:150],
+                        "reasoning": f"Browser-discovered in {niche} niche (LLM fallback - top 5 follower ranking)",
                         "posts": p.get("posts", []),
                         "followers": p.get("followers", 0),
                         "bio": p.get("bio", ""),
@@ -1348,7 +1406,7 @@ def export_node(state: InstagramAgentState):
     """Pushes leads to global state/storage and saves them to Supabase database."""
     print("\n--- [Node] Exporting Leads to database storage ---")
     leads = state.get('staged_leads', [])
-    campaign_id = state.get('icp', {}).get('campaignId')
+    campaign_id = state.get('campaign_id') or state.get('icp', {}).get('campaignId') or state.get('icp', {}).get('campaign_id')
     niche = state.get('niche', '')
     
     if leads:

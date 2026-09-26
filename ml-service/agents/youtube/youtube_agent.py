@@ -25,6 +25,7 @@ except ImportError:
 
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
+from utils.llm import get_groq_llm
 
 
 # ==========================================
@@ -117,9 +118,37 @@ class YouTubeAPIClient:
         self.youtube = build('youtube', 'v3', developerKey=self.api_key)
         self.quota = quota_manager
 
+    def _execute_with_retry(self, request_obj, retries: int = 3, delay: float = 10.0):
+        """
+        Executes a YouTube API request with automatic 10-second pause retries (up to 3 times)
+        if rate limits or quota errors are encountered.
+        """
+        for attempt in range(retries + 1):
+            try:
+                return request_obj.execute()
+            except HttpError as e:
+                is_rate_limit = False
+                status_code = getattr(e.resp, 'status', None)
+                if status_code in (429, 403):
+                    is_rate_limit = True
+                elif "quota" in str(e).lower() or "ratelimit" in str(e).lower():
+                    is_rate_limit = True
+
+                if is_rate_limit and attempt < retries:
+                    print(f"[YouTubeAPI] Rate limit/quota hit ({e}). Sleeping {delay}s (Attempt {attempt+1}/{retries})...")
+                    time.sleep(delay)
+                else:
+                    raise e
+            except Exception as e:
+                if ("429" in str(e) or "quota" in str(e).lower()) and attempt < retries:
+                    print(f"[YouTubeAPI] Potential rate limit hit ({e}). Sleeping {delay}s (Attempt {attempt+1}/{retries})...")
+                    time.sleep(delay)
+                else:
+                    raise e
+
     # --- Strategy 1: Keyword Search ---
     def search_channels(self, keyword: str, max_results: int = 50, geo_country: Optional[str] = None) -> List[str]:
-        """Performs YouTube API channel search by keyword."""
+        """Performs YouTube API channel search by keyword with 10s rate limit retries."""
         if not self.quota.can_afford('search'):
             print("[YouTubeAPI] Out of quota budget for search operation.")
             return []
@@ -135,7 +164,8 @@ class YouTubeAPIClient:
             if geo_country and len(geo_country) == 2:
                 kwargs['regionCode'] = geo_country.upper()
 
-            response = self.youtube.search().list(**kwargs).execute()
+            req = self.youtube.search().list(**kwargs)
+            response = self._execute_with_retry(req)
             self.quota.record_spend('search')
 
             channel_ids = [item['snippet']['channelId'] for item in response.get('items', []) if 'snippet' in item and 'channelId' in item['snippet']]
@@ -147,12 +177,11 @@ class YouTubeAPIClient:
 
     # --- Step 2: Batch Channel Details (up to 50 per request) ---
     def get_channel_details(self, channel_ids: List[str]) -> List[Dict[str, Any]]:
-        """Batch fetches channel details (50 per call)."""
+        """Batch fetches channel details (50 per call) with rate limit retries."""
         if not channel_ids:
             return []
 
         results = []
-        # Chunk into 50s
         chunk_size = 50
         for i in range(0, len(channel_ids), chunk_size):
             chunk = channel_ids[i:i + chunk_size]
@@ -161,10 +190,11 @@ class YouTubeAPIClient:
                 break
 
             try:
-                response = self.youtube.channels().list(
+                req = self.youtube.channels().list(
                     id=','.join(chunk),
                     part='snippet,statistics,contentDetails,brandingSettings'
-                ).execute()
+                )
+                response = self._execute_with_retry(req)
                 self.quota.record_spend('channels.list')
 
                 for ch in response.get('items', []):
@@ -172,7 +202,6 @@ class YouTubeAPIClient:
                     stats = ch.get('statistics', {})
                     branding = ch.get('brandingSettings', {}).get('channel', {})
 
-                    # Extract country directly from snippet or branding
                     country = snippet.get('country') or branding.get('country') or ''
 
                     results.append({
@@ -194,18 +223,19 @@ class YouTubeAPIClient:
 
     # --- Step 3: Fetch Recent Videos & Engagement ---
     def get_recent_videos(self, channel_id: str, max_results: int = 10) -> List[Dict[str, Any]]:
-        """Fetches recent videos for engagement rate & sponsorship detection."""
+        """Fetches recent videos for engagement rate & sponsorship detection with rate limit retries."""
         if not self.quota.can_afford('search'):
             return []
 
         try:
-            search_res = self.youtube.search().list(
+            req_search = self.youtube.search().list(
                 channelId=channel_id,
                 type='video',
                 part='snippet',
                 order='date',
                 maxResults=max_results
-            ).execute()
+            )
+            search_res = self._execute_with_retry(req_search)
             self.quota.record_spend('search')
 
             video_ids = [item['id']['videoId'] for item in search_res.get('items', []) if item.get('id', {}).get('videoId')]
@@ -215,10 +245,11 @@ class YouTubeAPIClient:
             if not self.quota.can_afford('videos.list'):
                 return []
 
-            stats_res = self.youtube.videos().list(
+            req_stats = self.youtube.videos().list(
                 id=','.join(video_ids),
                 part='statistics,snippet'
-            ).execute()
+            )
+            stats_res = self._execute_with_retry(req_stats)
             self.quota.record_spend('videos.list')
 
             return stats_res.get('items', [])
@@ -228,17 +259,18 @@ class YouTubeAPIClient:
 
     # --- Strategy 2: Competitor Comment Mining for B2B Buyer Leads ---
     def mine_comments_for_leads(self, video_id: str, max_results: int = 100) -> List[Dict[str, Any]]:
-        """Mines comments on competitor videos to discover warm B2B buyer leads."""
+        """Mines comments on competitor videos with rate limit retries."""
         if not self.quota.can_afford('commentThreads.list'):
             return []
 
         try:
-            response = self.youtube.commentThreads().list(
+            req = self.youtube.commentThreads().list(
                 videoId=video_id,
                 part='snippet',
                 maxResults=max_results,
                 order='relevance'
-            ).execute()
+            )
+            response = self._execute_with_retry(req)
             self.quota.record_spend('commentThreads.list')
 
             intent_signals = []
@@ -545,53 +577,115 @@ class YouTubeLeadAgent:
     def node_llm_score(self, state: YouTubeAgentState) -> Dict[str, Any]:
         leads = state.get("enriched_leads", [])
         icp = state.get("icp", {})
+        target_count = state.get("target_lead_count", 5)
         staged = []
 
         print(f"[Node 5: LLM Score] Validating {len(leads)} enriched leads against ICP...")
+        if not leads:
+            return {"staged_leads": []}
+
+        # Cap leads to avoid unnecessary LLM drain (max target_count * 2)
+        max_candidates = max(target_count * 2, 10)
+        if len(leads) > max_candidates:
+            # Sort by subscriber count and avg_views descending
+            leads = sorted(leads, key=lambda x: (x.get("subscriber_count", 0), x.get("avg_views", 0)), reverse=True)[:max_candidates]
+            print(f"[Node 5: LLM Score] Capped candidates to top {len(leads)} leads for LLM validation.")
 
         groq_api_key = os.getenv("GROQ_API_KEY")
         llm = None
         if groq_api_key:
             try:
-                llm = ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=groq_api_key, temperature=0.1)
+                llm = get_groq_llm()
             except Exception as e:
                 print(f"[-] LLM initialization warning: {e}")
 
-        for lead in leads:
-            if llm:
-                try:
-                    prompt = f"""
-                    Evaluate this YouTube lead against the Campaign ICP:
-                    ICP: {json.dumps(icp)}
-                    Lead Name: {lead.get('name')}
-                    Subscribers: {lead.get('subscriber_count')}
-                    Avg Views: {lead.get('avg_views')}
-                    Country: {lead.get('country')}
-                    Bio/Description: {lead.get('description')[:300]}
-                    Sponsorship History: {lead.get('sponsorship_history')}
+        if not llm:
+            print("[Node 5: LLM Score] No LLM available, staging all candidate leads.")
+            return {"staged_leads": leads}
 
-                    Output JSON:
-                    {{
-                        "is_match": true/false,
-                        "creator_info": "concise summary",
-                        "reasoning": "why it matches or fails"
-                    }}
-                    """
+        # Process leads in batches of 5 to minimize LLM API calls and prevent rate limits
+        batch_size = 5
+        for i in range(0, len(leads), batch_size):
+            batch = leads[i:i + batch_size]
+            batch_summaries = []
+            for idx, lead in enumerate(batch):
+                batch_summaries.append({
+                    "batch_index": idx,
+                    "name": lead.get("name"),
+                    "subscribers": lead.get("subscriber_count"),
+                    "avg_views": lead.get("avg_views"),
+                    "country": lead.get("country"),
+                    "description": (lead.get("description") or "")[:250],
+                    "sponsorship_history": lead.get("sponsorship_history")
+                })
+
+            prompt = f"""
+            Evaluate these YouTube leads against the Campaign ICP:
+            ICP: {json.dumps(icp)}
+
+            Leads Batch:
+            {json.dumps(batch_summaries, indent=2)}
+
+            Output a JSON array of objects for each lead in the batch:
+            [
+              {{
+                "batch_index": 0,
+                "is_match": true/false,
+                "creator_info": "concise summary",
+                "reasoning": "why it matches or fails ICP"
+              }}
+            ]
+            """
+
+            # Execute LLM call with retry mechanism for rate limits (429)
+            res_content = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
                     res = llm.invoke(prompt)
-                    clean_res = res.content.strip()
+                    res_content = res.content.strip()
+                    break
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "429" in err_str or "rate limit" in err_str or "quota" in err_str:
+                        wait_time = 10 * (attempt + 1)
+                        print(f"[!] Rate limit encountered on batch LLM call. Pausing {wait_time}s (attempt {attempt + 1}/{max_retries})...")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"[-] LLM batch invoke error: {e}")
+                        break
+
+            if res_content:
+                try:
+                    clean_res = res_content
                     if "```json" in clean_res:
                         clean_res = clean_res.split("```json")[1].split("```")[0].strip()
-                    parsed = json.loads(clean_res, strict=False)
+                    elif "```" in clean_res:
+                        clean_res = clean_res.split("```")[1].split("```")[0].strip()
 
-                    if parsed.get("is_match", True):
-                        lead["creator_info"] = parsed.get("creator_info", lead["creator_info"])
-                        lead["reasoning"] = parsed.get("reasoning", lead["reasoning"])
-                        staged.append(lead)
-                except Exception as e:
-                    print(f"[-] LLM scoring fallback for @{lead.get('name')}: {e}")
-                    staged.append(lead)
+                    parsed_list = json.loads(clean_res, strict=False)
+                    if isinstance(parsed_list, list):
+                        eval_map = {item.get("batch_index"): item for item in parsed_list if isinstance(item, dict)}
+                        for idx, lead in enumerate(batch):
+                            eval_item = eval_map.get(idx)
+                            if eval_item:
+                                if eval_item.get("is_match", True):
+                                    lead["creator_info"] = eval_item.get("creator_info", lead.get("creator_info"))
+                                    lead["reasoning"] = eval_item.get("reasoning", lead.get("reasoning"))
+                                    staged.append(lead)
+                            else:
+                                staged.append(lead)
+                    else:
+                        staged.extend(batch)
+                except Exception as parse_err:
+                    print(f"[-] Error parsing LLM batch response: {parse_err}. Fallback to staging batch.")
+                    staged.extend(batch)
             else:
-                staged.append(lead)
+                staged.extend(batch)
+
+            # Mandatory 2.0-second delay between LLM batch requests to protect API quota
+            if i + batch_size < len(leads):
+                time.sleep(2.0)
 
         print(f"[Node 5: LLM Score] {len(staged)} leads approved.")
         return {"staged_leads": staged}

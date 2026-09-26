@@ -3,6 +3,7 @@ import { enqueue } from "@/lib/queue";
 import { v4 as uuidv4 } from "uuid";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { prisma } from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,7 +11,24 @@ export async function POST(req: NextRequest) {
     const userId = (session?.user as any)?.id || null;
 
     const body = await req.json();
-    const { campaignName, industry, geoTarget, targetProfile, channels } = body;
+    const { 
+      campaignName, 
+      goalType,
+      industry, 
+      geoTarget, 
+      budget,
+      targetProfile, 
+      focus,
+      minFollowers,
+      exclusions,
+      b2bSignals,
+      minEngagement,
+      contentType,
+      channels,
+      tone,
+      sequence,
+      companyId 
+    } = body;
 
     // Basic validation matching the required fields in frontend
     if (!campaignName || !industry || !geoTarget || !targetProfile || !channels || channels.length === 0) {
@@ -21,11 +39,42 @@ export async function POST(req: NextRequest) {
     }
 
     const jobId = uuidv4();
+
+    // Create Campaign record in database first so campaignId FK exists
+    try {
+      await prisma.campaign.create({
+        data: {
+          id: jobId,
+          name: campaignName,
+          goalType: goalType || "Lead Generation",
+          industry,
+          geoTarget,
+          budget: budget || "Organic Outreach",
+          targetProfile,
+          focus: focus || "B2B",
+          minFollowers: minFollowers ? String(minFollowers) : null,
+          exclusions: exclusions || null,
+          b2bSignals: Array.isArray(b2bSignals) ? b2bSignals : [],
+          minEngagement: minEngagement ? String(minEngagement) : null,
+          contentType: contentType || null,
+          channels: Array.isArray(channels) ? channels : [],
+          tone: tone || "Professional",
+          sequence: sequence || "3 Touchpoints",
+          companyId: companyId || null,
+          userId: userId || null,
+        },
+      });
+      console.log(`[+] Saved Campaign '${campaignName}' (${jobId}) to Prisma database.`);
+    } catch (dbErr) {
+      console.error("[-] Error saving Campaign to Prisma database:", dbErr);
+    }
+
     const job = {
       jobId,
-      jobType: "campaign_build",
+      jobType: "master",
       jobBody: {
         ...body,
+        campaignId: jobId,
         userId,
       },
     };
@@ -35,6 +84,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       jobId: addedJob.id,
+      campaignId: jobId,
       message: "Campaign build job enqueued successfully",
     });
   } catch (error: unknown) {

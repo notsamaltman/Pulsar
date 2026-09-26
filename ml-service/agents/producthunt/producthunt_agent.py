@@ -16,6 +16,7 @@ load_dotenv()
 
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
+from utils.llm import get_groq_llm
 
 PRODUCTHUNT_API = "https://api.producthunt.com/v2/api/graphql"
 
@@ -480,7 +481,7 @@ class ProductHuntLeadAgent:
         llm = None
         if groq_api_key:
             try:
-                llm = ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=groq_api_key, temperature=0.1)
+                llm = get_groq_llm()
             except Exception as e:
                 print(f"[-] LLM init warning: {e}")
                 

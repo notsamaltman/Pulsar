@@ -59,7 +59,7 @@ export const TextReveal = ({
       {words.map((word, index) => (
         <span key={index} style={{ display: "inline-flex", marginRight: "0.25em" }}>
           {Array.from(word).map((letter, letterIndex) => (
-            <motion.span key={letterIndex} variants={child} style={{ display: "inline-block" }}>
+            <motion.span key={letterIndex} variants={child as any} style={{ display: "inline-block" }}>
               {letter}
             </motion.span>
           ))}
