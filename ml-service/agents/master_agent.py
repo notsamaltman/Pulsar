@@ -271,7 +271,14 @@ class MasterAgent:
 
     def __init__(self, job: bullmq.Job):
         self.job = job
-        self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        url = os.getenv("UPSTASH_REDIS_URL") or os.getenv("REDIS_URL")
+        if not url:
+            rest_url = os.getenv("UPSTASH_REDIS_REST_URL")
+            rest_token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+            if rest_url:
+                host = rest_url.replace("https://", "").replace("http://", "").strip("/")
+                url = f"rediss://default:{rest_token}@{host}:6379" if rest_token else f"rediss://{host}:6379"
+        self.redis_url = url or "redis://localhost:6379"
 
     async def run(self):
         """Main execution entry point called by the BullMQ worker."""

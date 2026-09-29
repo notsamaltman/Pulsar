@@ -8,8 +8,8 @@ services:
       - ./ml-service:/store
     networks:
       - pulsar-network
-    environment:
-      - REDIS_URL=redis://cache:6379
+    env_file:
+      - .env
 
   cache:
     image: redis:alpine

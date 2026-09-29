@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
+import { getRedisConnection } from "@/lib/redis";
 
-const connection = new IORedis({
-  host: process.env.REDIS_HOST || "localhost",
-  port: parseInt(process.env.REDIS_PORT || "6379"),
-  maxRetriesPerRequest: null,
-});
+const connection = getRedisConnection();
 
 export async function GET(
   req: NextRequest,

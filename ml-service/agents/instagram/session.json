@@ -1,6 +1,6 @@
 {
     "username": "bigdaddysoham",
-    "last_login": "2026-09-27T01:44:16.505941",
+    "last_login": "2026-09-27T19:19:07.612487",
     "storage_state": {
         "cookies": [
             {
@@ -8,7 +8,7 @@
                 "value": "G2ZJyTByllvY2r0QhgpAPl",
                 "domain": ".instagram.com",
                 "path": "/",
-                "expires": 1825013649.760893,
+                "expires": 1825076939.131126,
                 "httpOnly": false,
                 "secure": true,
                 "sameSite": "Lax"
@@ -48,7 +48,7 @@
                 "value": "20418456832",
                 "domain": ".instagram.com",
                 "path": "/",
-                "expires": 1798229649.761026,
+                "expires": 1798292939.131315,
                 "httpOnly": false,
                 "secure": true,
                 "sameSite": "None"
@@ -88,28 +88,8 @@
                 "value": "1280x720",
                 "domain": ".instagram.com",
                 "path": "/",
-                "expires": 1791058451,
+                "expires": 1791121741,
                 "httpOnly": false,
-                "secure": true,
-                "sameSite": "Lax"
-            },
-            {
-                "name": "test_cookie",
-                "value": "CheckForPermission",
-                "domain": ".doubleclick.net",
-                "path": "/",
-                "expires": 1790454547.348122,
-                "httpOnly": false,
-                "secure": true,
-                "sameSite": "None"
-            },
-            {
-                "name": "rur",
-                "value": "ODN%2C17841420424962307%2C1791663295%3A01ff56b9754a812ad6350d93c630a7d9e10d25dba893b2e0d670ff669c5f26ce02bf17bb",
-                "domain": ".instagram.com",
-                "path": "/",
-                "expires": -1,
-                "httpOnly": true,
                 "secure": true,
                 "sameSite": "Lax"
             },
@@ -122,6 +102,16 @@
                 "httpOnly": true,
                 "secure": true,
                 "sameSite": "None"
+            },
+            {
+                "name": "rur",
+                "value": "ODN%2C17841420424962307%2C1791726588%3A01ffaddfe30e9b8d01115475975acf9d72904ddec9868cd7c3991f24ea06f40fa0c9b050",
+                "domain": ".instagram.com",
+                "path": "/",
+                "expires": -1,
+                "httpOnly": true,
+                "secure": true,
+                "sameSite": "Lax"
             }
         ],
         "origins": [
@@ -134,15 +124,15 @@
                     },
                     {
                         "name": "chatd-deviceid",
-                        "value": "14ee540b-1708-497b-8846-87e075609a2b"
+                        "value": "c5e1157e-3cc9-43b2-b7b0-b05953470e96"
                     },
                     {
                         "name": "IGSession",
-                        "value": "4yx878:1790455452247"
+                        "value": "od51zn:1790518741578"
                     },
                     {
                         "name": "pigeon_state",
-                        "value": "{\"lastDeviceInfoTime\":1790453646295}"
+                        "value": "{\"lastDeviceInfoTime\":1790516937654}"
                     },
                     {
                         "name": "fr",
@@ -154,15 +144,15 @@
                     },
                     {
                         "name": "Session",
-                        "value": "raigp1:1790453686778"
+                        "value": "w032x8:1790516976212"
                     },
                     {
                         "name": "_oz_bandwidthEstimate",
-                        "value": "40124756"
+                        "value": "38049001"
                     },
                     {
                         "name": "banzai:last_storage_flush",
-                        "value": "1790453641819.9"
+                        "value": "1790516931068.5"
                     },
                     {
                         "name": "caa_feta_onetap_users_migrated",
@@ -170,15 +160,15 @@
                     },
                     {
                         "name": "hb_timestamp",
-                        "value": "1790453645027"
+                        "value": "1790516933952"
                     },
                     {
                         "name": "_oz_bandwidthAndTTFBSamples",
-                        "value": "{\"b\":[{\"b\":203685,\"s\":1790453647952,\"t\":53},{\"b\":202479,\"s\":1790453648004,\"t\":52},{\"b\":207315,\"s\":1790453648059,\"t\":55},{\"b\":201238,\"s\":1790453648110,\"t\":51},{\"b\":1873940,\"s\":1790453648146,\"t\":14}],\"t\":[{\"s\":1790453647623,\"t\":4.799999997019768,\"l\":511.3999999985099,\"b\":1950692},{\"s\":1790453647634,\"t\":4.799999997019768,\"l\":8.399999998509884,\"b\":62464},{\"s\":1790453648128,\"t\":4.100000001490116,\"l\":485.3999999985099,\"b\":1873940},{\"s\":1790453648132,\"t\":0,\"l\":0.3999999985098839,\"b\":62464},{\"s\":1790453648146,\"t\":0,\"l\":1.3999999985098839,\"b\":1873940}]}"
+                        "value": "{\"b\":[{\"b\":200233,\"s\":1790516937483,\"t\":52},{\"b\":200245,\"s\":1790516937535,\"t\":52},{\"b\":202659,\"s\":1790516937587,\"t\":52},{\"b\":200245,\"s\":1790516937639,\"t\":52},{\"b\":1873940,\"s\":1790516937681,\"t\":11}],\"t\":[{\"s\":1790516937105,\"t\":7.799999997019768,\"l\":873.3999999985099,\"b\":3107439},{\"s\":1790516937174,\"t\":4.399999998509884,\"l\":65.19999999552965,\"b\":295758},{\"s\":1790516937663,\"t\":5.700000002980232,\"l\":481.6000000014901,\"b\":1873940},{\"s\":1790516937668,\"t\":0,\"l\":0.6000000014901161,\"b\":295758},{\"s\":1790516937681,\"t\":0.10000000149011612,\"l\":1.3999999985098839,\"b\":1873940}]}"
                     },
                     {
                         "name": "signal_flush_timestamp",
-                        "value": "1790453645084"
+                        "value": "1790516934036"
                     }
                 ]
             },
@@ -220,7 +210,7 @@
                     },
                     {
                         "name": "Session",
-                        "value": "3j8x6a:1790453689833"
+                        "value": "xx12uc:1790516979556"
                     },
                     {
                         "name": "falco_queue_log^$^$fa83a35b8acdc1f5e",

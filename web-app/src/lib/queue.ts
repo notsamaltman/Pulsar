@@ -1,13 +1,8 @@
 // lib/queue.ts
 import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
+import { getRedisConnection } from './redis';
 
-const connection = new IORedis({ 
-  maxRetriesPerRequest: null,
-  // Add environment variables for Redis if available
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-});
+const connection = getRedisConnection();
 
 export interface Job {
   jobId: string;

@@ -1,15 +1,11 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
+import { getRedisConnection } from "@/lib/redis";
 
 export const dynamic = 'force-dynamic';
 
-const connection = new IORedis({
-  host: process.env.REDIS_HOST || "localhost",
-  port: parseInt(process.env.REDIS_PORT || "6379"),
-  maxRetriesPerRequest: null,
-});
+const connection = getRedisConnection();
 
 export async function GET(
   req: NextRequest,

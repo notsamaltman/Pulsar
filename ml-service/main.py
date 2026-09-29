@@ -4,8 +4,11 @@ import asyncio
 import signal
 import os
 import json
+from dotenv import load_dotenv
 from agents.company_builder import CompanyBuilder
 from agents.master_agent import MasterAgent
+
+load_dotenv()
 
 async def company_profile_builder(job:bullmq.Job, job_token:str):
     # job.data will include the data added to the queue
@@ -28,8 +31,20 @@ async def master_agent_handler(job:bullmq.Job, job_token:str):
         print(f"[master-queue] Error processing job {job.id}: {str(e)}")
         await job.updateProgress({"status": "failed", "message": f"Error: {str(e)}"})
 
-async def main():
+def get_redis_url() -> str:
+    url = os.getenv("UPSTASH_REDIS_URL") or os.getenv("REDIS_URL")
+    if url:
+        return url
+    rest_url = os.getenv("UPSTASH_REDIS_REST_URL")
+    rest_token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+    if rest_url:
+        host = rest_url.replace("https://", "").replace("http://", "").strip("/")
+        if rest_token:
+            return f"rediss://default:{rest_token}@{host}:6379"
+        return f"rediss://{host}:6379"
+    return "redis://localhost:6379"
 
+async def main():
     # Create an event that will be triggered for shutdown
     shutdown_event = asyncio.Event()
 
@@ -41,8 +56,7 @@ async def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    # Use REDIS_URL environment variable, defaulting to localhost for local development
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_url = get_redis_url()
     company_profile_worker = Worker("company_build-queue", company_profile_builder, {"connection": redis_url})
     master_agent_worker = Worker("master-queue", master_agent_handler, {"connection": redis_url})
     print("[+] Workers started: company_build-queue, master-queue")
