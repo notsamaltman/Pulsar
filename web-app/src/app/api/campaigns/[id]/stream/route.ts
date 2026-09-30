@@ -5,7 +5,6 @@ import { getRedisConnection } from "@/lib/redis";
 
 export const dynamic = 'force-dynamic';
 
-const connection = getRedisConnection();
 
 export async function GET(
   req: NextRequest,
@@ -17,6 +16,7 @@ export async function GET(
   
   const stream = new ReadableStream({
     async start(controller) {
+      const connection = getRedisConnection();
       const queue = new Queue("master-queue", { connection });
       let isClosed = false;
 

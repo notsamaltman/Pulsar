@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
 import { getRedisConnection } from "@/lib/redis";
 
-const connection = getRedisConnection();
 
 export async function GET(
   req: NextRequest,
@@ -29,6 +28,7 @@ export async function GET(
     let jobState: string = "completed";
 
     try {
+      const connection = getRedisConnection();
       const queue = new Queue("master-queue", { connection });
       const job = await queue.getJob(id);
 
@@ -84,6 +84,7 @@ export async function DELETE(
 
     // Also attempt to remove job from BullMQ queue if present
     try {
+      const connection = getRedisConnection();
       const queue = new Queue("master-queue", { connection });
       const job = await queue.getJob(id);
       if (job) {

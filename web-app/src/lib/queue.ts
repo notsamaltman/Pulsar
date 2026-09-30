@@ -2,8 +2,6 @@
 import { Queue } from 'bullmq';
 import { getRedisConnection } from './redis';
 
-const connection = getRedisConnection();
-
 export interface Job {
   jobId: string;
   jobType: string;
@@ -17,15 +15,20 @@ export interface Job {
  */
 export async function enqueue(job: Job) {
   const { jobId, jobType, jobBody } = job;
+  const connection = getRedisConnection();
   const requestQueue = new Queue(`${jobType}-queue`, { connection });
   
-  // Enqueue the job with a unique name and the body as data
-  const addedJob = await requestQueue.add(
-    `${jobId}-${jobType}-${Date.now()}`,
-    { ...jobBody, jobId, jobType }
-  );
-  
-  return addedJob;
+  try {
+    // Enqueue the job with a unique name and the body as data
+    const addedJob = await requestQueue.add(
+      `${jobId}-${jobType}-${Date.now()}`,
+      { ...jobBody, jobId, jobType }
+    );
+    
+    return addedJob;
+  } finally {
+    await requestQueue.close();
+  }
 }
 
 // Keep a default export for backward compatibility if needed, 

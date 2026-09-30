@@ -1,10 +1,17 @@
 import IORedis, { RedisOptions } from 'ioredis';
 
+let redisConnectionInstance: IORedis | null = null;
+
 /**
  * Creates and returns an IORedis connection instance configured for Upstash or standard Redis environments.
  * Upstash Redis URLs typically start with `rediss://` (TLS enabled).
+ * Uses lazyConnect: true to prevent automatic connection attempts during build/prerender time.
  */
 export function getRedisConnection(): IORedis {
+  if (redisConnectionInstance) {
+    return redisConnectionInstance;
+  }
+
   let url = process.env.UPSTASH_REDIS_URL || process.env.REDIS_URL;
 
   // If no direct redis:// or rediss:// URL is set, check if REST credentials can be converted
@@ -21,6 +28,8 @@ export function getRedisConnection(): IORedis {
 
   const options: RedisOptions = {
     maxRetriesPerRequest: null,
+    lazyConnect: true,
+    enableOfflineQueue: false,
   };
 
   if (url) {
@@ -29,20 +38,22 @@ export function getRedisConnection(): IORedis {
         rejectUnauthorized: false,
       };
     }
-    return new IORedis(url, options);
+    redisConnectionInstance = new IORedis(url, options);
+  } else {
+    // Fallback to explicit host/port or localhost
+    const host = process.env.REDIS_HOST || 'localhost';
+    const port = parseInt(process.env.REDIS_PORT || '6379', 10);
+    const password = process.env.REDIS_PASSWORD || undefined;
+
+    redisConnectionInstance = new IORedis({
+      ...options,
+      host,
+      port,
+      password,
+    });
   }
 
-  // Fallback to explicit host/port or localhost
-  const host = process.env.REDIS_HOST || 'localhost';
-  const port = parseInt(process.env.REDIS_PORT || '6379', 10);
-  const password = process.env.REDIS_PASSWORD || undefined;
-
-  return new IORedis({
-    ...options,
-    host,
-    port,
-    password,
-  });
+  return redisConnectionInstance;
 }
 
 export default getRedisConnection;
