@@ -10,9 +10,10 @@ const config: OpenNextConfig = {
       tagCache: "dummy",
       queue: "dummy",
     },
-    external: ["pg-cloudflare", "pg"],
   },
+
   edgeExternals: ["node:crypto", "pg-cloudflare"],
+
   middleware: {
     external: true,
     override: {
