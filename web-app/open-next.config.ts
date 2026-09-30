@@ -8,11 +8,8 @@ const config = {
       tagCache: "dummy",
       queue: "dummy",
     },
-    bundler: {
-      external: ["pg-cloudflare"],
-    },
   },
-  edgeExternals: ["node:crypto"],
+  edgeExternals: ["node:crypto", "pg-cloudflare"],
   middleware: {
     external: true,
     override: {
