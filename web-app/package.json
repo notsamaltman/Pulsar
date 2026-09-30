@@ -8,7 +8,9 @@
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:worker\"",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1024.0",
@@ -51,6 +53,6 @@
     "prisma": "^7.9.1",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.145.0"
   }
 }
