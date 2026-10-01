@@ -17,7 +17,7 @@ import {
 import { CreateCompanyModal, AnimatedButton } from "@/components";
 import { LogoutButton } from "@/components/LogoutButton";
 import { CompanyCard } from "@/components/CompanyCard";
-import { Company } from "@prisma/client";
+import type { Company } from "@/generated/prisma/client";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function DashboardPage() {

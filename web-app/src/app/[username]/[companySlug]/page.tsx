@@ -20,7 +20,7 @@ import {
   Trash2
 } from "lucide-react";
 import { LogoutButton } from "@/components/LogoutButton";
-import { Company } from "@prisma/client";
+import type { Company } from "@/generated/prisma/client";
 
 import CreateCampaignModal from "@/components/CreateCampaignModal";
 import CampaignDetailView from "@/components/CampaignDetailView";
