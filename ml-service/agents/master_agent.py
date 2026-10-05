@@ -189,7 +189,7 @@ def _run_instagram(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Runs the Instagram agent synchronously in its own thread."""
     print("[MasterAgent] → Starting Instagram agent...")
     try:
-        from agents.instagram.instagram_agent import create_instagram_graph
+        from agents.instagram.instagram_agent import create_instagram_graph, cleanup_browser_resources
         graph = create_instagram_graph()
         final_state = graph.invoke(payload)
         leads = final_state.get("staged_leads", [])
@@ -204,6 +204,13 @@ def _run_instagram(payload: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[MasterAgent] ✗ Instagram agent error: {e}")
         traceback.print_exc()
         return {"platform": "instagram", "leads": [], "lead_count": 0, "error": str(e)}
+    finally:
+        try:
+            from agents.instagram.instagram_agent import cleanup_browser_resources
+            cleanup_browser_resources()
+        except Exception as ce:
+            print(f"[!] Warning cleaning up browser resources: {ce}")
+
 
 
 def _run_youtube(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -356,6 +363,14 @@ class MasterAgent:
             for platform, r in all_results.items()
         }
 
+        user_id = icp.get("userId")
+        if total_leads > 0 and user_id:
+            try:
+                from utils.lead_db import mark_user_first_job_done_sync
+                mark_user_first_job_done_sync(user_id)
+            except Exception as u_err:
+                print(f"[!] Could not mark first job done for user {user_id}: {u_err}")
+
         print("\n" + "=" * 60)
         print(f"[MasterAgent] ALL AGENTS COMPLETE — Total leads: {total_leads}")
         for plat, info in summary.items():
@@ -369,6 +384,7 @@ class MasterAgent:
             "summary": summary,
             "total_leads": total_leads,
         })
+
 
     @staticmethod
     def _extract_icp(job_data: Dict[str, Any]) -> Dict[str, Any]:

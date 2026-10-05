@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 
 COPY . .
-RUN DATABASE_URL="postgresql://user:pass@localhost:5432/db" prisma generate
+RUN prisma generate
 # Generates the Prisma client layer inside the image using the new config system
 
 EXPOSE 8000

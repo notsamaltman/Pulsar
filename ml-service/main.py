@@ -14,14 +14,18 @@ import urllib.error
 load_dotenv()
 
 async def company_profile_builder(job:bullmq.Job, job_token:str):
-    # job.data will include the data added to the queue
     try:
         builder = CompanyBuilder(job)
         await builder.run()
         print(f"Job {job.id} completed successfully")
     except Exception as e:
-        print(f"Error processing job {job.id}: {str(e)}")
-        await job.updateProgress({"status": "failed", "message": f"Error: {str(e)}"})
+        err_str = str(e)
+        if "Groq" in err_str or "rate limit" in err_str.lower() or "429" in err_str:
+            print(f"[!] Job {job.id} paused due to Groq rate limit: {err_str}")
+            await job.updateProgress({"status": "waiting_for_groq", "message": "Groq API temporarily rate-limited. Job safely paused."})
+        else:
+            print(f"Error processing job {job.id}: {err_str}")
+            await job.updateProgress({"status": "failed", "message": f"Error: {err_str}"})
 
 async def master_agent_handler(job:bullmq.Job, job_token:str):
     """Handles jobs from master-queue — fans out ICP to all sub-agents."""
@@ -31,8 +35,13 @@ async def master_agent_handler(job:bullmq.Job, job_token:str):
         await agent.run()
         print(f"[master-queue] Job {job.id} completed successfully")
     except Exception as e:
-        print(f"[master-queue] Error processing job {job.id}: {str(e)}")
-        await job.updateProgress({"status": "failed", "message": f"Error: {str(e)}"})
+        err_str = str(e)
+        if "Groq" in err_str or "rate limit" in err_str.lower() or "429" in err_str:
+            print(f"[master-queue] Job {job.id} paused due to Groq rate limit: {err_str}")
+            await job.updateProgress({"status": "waiting_for_groq", "message": "Groq API temporarily rate-limited. Job safely paused."})
+        else:
+            print(f"[master-queue] Error processing job {job.id}: {err_str}")
+            await job.updateProgress({"status": "failed", "message": f"Error: {err_str}"})
 
 def get_redis_url() -> str:
     url = os.getenv("UPSTASH_REDIS_URL") or os.getenv("REDIS_URL")
@@ -73,34 +82,33 @@ async def heartbeat_poller(shutdown_event: asyncio.Event):
             pass
 
 async def main():
-    # Create an event that will be triggered for shutdown
     shutdown_event = asyncio.Event()
 
     def signal_handler(signal, frame):
         print("Signal received, shutting down.")
         shutdown_event.set()
 
-    # Assign signal handlers to SIGTERM and SIGINT
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
     redis_url = get_redis_url()
-    company_profile_worker = Worker("company_build-queue", company_profile_builder, {"connection": redis_url})
-    master_agent_worker = Worker("master-queue", master_agent_handler, {"connection": redis_url})
-    print("[+] Workers started: company_build-queue, master-queue")
+    concurrency = int(os.getenv("PULSAR_WORKER_CONCURRENCY", "2"))
+    print(f"[+] Initializing BullMQ workers with concurrency={concurrency}...")
 
-    # Start heartbeat task
+    company_profile_worker = Worker("company_build-queue", company_profile_builder, {"connection": redis_url, "concurrency": concurrency})
+    master_agent_worker = Worker("master-queue", master_agent_handler, {"connection": redis_url, "concurrency": concurrency})
+    print(f"[+] Workers active: company_build-queue, master-queue (concurrency={concurrency})")
+
     heartbeat_task = asyncio.create_task(heartbeat_poller(shutdown_event))
 
-    # Wait until the shutdown event is set
     await shutdown_event.wait()
 
-    # close the worker
     print("Cleaning up workers...")
     await heartbeat_task
     await company_profile_worker.close()
     await master_agent_worker.close()
     print("Workers shut down successfully.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

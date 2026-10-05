@@ -9,19 +9,17 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String? // This can store the S3 profile picture link
-  accounts      Account[]
-  sessions      Session[]
-
-  // Custom metadata fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  campaigns Campaign[]
+  id                   String     @id @default(cuid())
+  name                 String?
+  email                String?    @unique
+  emailVerified        DateTime?
+  image                String?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  firstSuccessfulJobAt DateTime?  @db.Timestamp(6)
+  accounts             Account[]
+  campaigns            Campaign[]
+  sessions             Session[]
 
   @@map("users")
 }
@@ -32,16 +30,15 @@ model Account {
   type                     String
   provider                 String
   providerAccountId        String
-  refresh_token            String? @db.Text
-  access_token             String? @db.Text
+  refresh_token            String?
+  access_token             String?
   expires_at               Int?
   token_type               String?
   scope                    String?
-  id_token                 String? @db.Text
+  id_token                 String?
   session_state            String?
   refresh_token_expires_in Int?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@map("accounts")
@@ -67,90 +64,74 @@ model VerificationToken {
 }
 
 model Company {
-  id          String   @id @default(cuid())
+  id          String     @id @default(cuid())
   name        String
   website     String?
   description String
   summary     String?
   userId      String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  campaigns Campaign[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  campaigns   Campaign[]
 
   @@map("companies")
 }
 
 model Campaign {
-  id String @id @default(cuid())
-
-  // Campaign Basics
-  name      String
-  goalType  String
-  industry  String
-  geoTarget String
-  budget    String
-
-  // Audience
+  id            String         @id @default(cuid())
+  name          String
+  goalType      String
+  industry      String
+  geoTarget     String
+  budget        String
   targetProfile String
   focus         String
   minFollowers  String?
   exclusions    String?
-
-  // Intent
   b2bSignals    String[]
   minEngagement String?
   contentType   String?
-
-  // Outreach
-  channels String[]
-  tone     String
-  sequence String
-
-  // Relations
-  companyId String?
-  userId    String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
+  channels      String[]
+  tone          String
+  sequence      String
+  companyId     String?
+  userId        String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   campaignLeads CampaignLead[]
+  company       Company?       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user          User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("campaigns")
 }
 
 model Lead {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  platform       String?   @db.VarChar(50)
-  handle         String?   @db.VarChar(255)
-  followerCount  Int?      @map("follower_count")
-  engagementRate Float?    @map("engagement_rate")
-  geoCountry     String?   @map("geo_country") @db.VarChar(100)
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platform       String?                @db.VarChar(50)
+  handle         String?                @db.VarChar(255)
+  followerCount  Int?                   @map("follower_count")
+  engagementRate Float?                 @map("engagement_rate")
+  geoCountry     String?                @map("geo_country") @db.VarChar(100)
   niche          String[]
-  profile        Json?     @db.JsonB
-  embedding      Unsupported("vector(1536)")?
-  lastScrapedAt  DateTime? @map("last_scraped_at") @db.Timestamp(6)
-  lastEnrichedAt DateTime? @map("last_enriched_at") @db.Timestamp(6)
-
-  campaignLeads CampaignLead[]
+  profile        Json?
+  embedding      Unsupported("vector")?
+  lastScrapedAt  DateTime?              @map("last_scraped_at") @db.Timestamp(6)
+  lastEnrichedAt DateTime?              @map("last_enriched_at") @db.Timestamp(6)
+  campaignLeads  CampaignLead[]
 
   @@unique([platform, handle])
   @@map("leads")
 }
 
 model CampaignLead {
-  campaignId       String   @map("campaign_id")
-  leadId           String   @map("lead_id") @db.Uuid
-  icpScore         Float?   @map("icp_score")
-  status           String?  @default("queued") @db.VarChar(50)
+  campaignId       String    @map("campaign_id")
+  leadId           String    @map("lead_id") @db.Uuid
+  icpScore         Float?    @map("icp_score")
+  status           String?   @default("queued") @db.VarChar(50)
   contactedAt      DateTime? @map("contacted_at") @db.Timestamp(6)
-  responseReceived Boolean? @map("response_received")
-
-  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  responseReceived Boolean?  @map("response_received")
+  campaign         Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead             Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@id([campaignId, leadId])
   @@map("campaign_leads")

@@ -1,9 +1,8 @@
-"use client";
-
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertCircle } from "lucide-react";
 import Stepper, { Step } from "./Stepper";
+import { useServiceHealth } from "./ServiceHealthProvider";
 
 interface CreateCampaignModalProps {
   isOpen: boolean;
@@ -12,6 +11,7 @@ interface CreateCampaignModalProps {
 }
 
 export default function CreateCampaignModal({ isOpen, onClose, companyId }: CreateCampaignModalProps) {
+  const { isOffline } = useServiceHealth();
   const [formData, setFormData] = useState({
     campaignName: "",
     goalType: "Lead Generation",
@@ -31,6 +31,8 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [apiError, setApiError] = useState<{ title: string; message: string; code?: string } | null>(null);
+
 
   const validateStep = (step: number) => {
     const newErrors: Record<string, string> = {};
@@ -41,7 +43,6 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
     } else if (step === 2) {
       if (!formData.targetProfile.trim()) newErrors.targetProfile = "Target profile is required";
     } else if (step === 3) {
-      // Intent signals could be strictly validated but let's just make sure at least one is provided
       const hasB2bSignal = formData.b2bSignals.length > 0;
       const hasInfluencerSignal = formData.minEngagement.trim() || formData.contentType.trim();
       if (!hasB2bSignal && !hasInfluencerSignal) {
@@ -93,25 +94,64 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
             >
               <X className="w-5 h-5" />
             </button>
+            {apiError && (
+              <div className="mb-4 mx-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-rose-300">
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-xs font-bold uppercase tracking-wider text-rose-200">{apiError.title}</p>
+                  <p className="text-xs text-rose-300/90">{apiError.message}</p>
+                </div>
+              </div>
+            )}
             <Stepper
               validateStep={validateStep}
               onFinalStepCompleted={async () => {
+                setApiError(null);
+                if (isOffline) {
+                  setApiError({
+                    title: "Backend Service Down",
+                    message: "Pulsar's backend execution engine is currently offline or unreachable. Please wait a moment or click Retry on the bottom-right badge."
+                  });
+                  return;
+                }
                 try {
                   const res = await fetch("/api/job/campaign", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ ...formData, companyId })
                   });
+
                   if (res.ok) {
                     onClose();
                   } else {
                     const data = await res.json();
-                    alert("Error: " + data.error);
+                    if (data.code === "DAILY_LIMIT_REACHED") {
+                      setApiError({
+                        code: data.code,
+                        title: "Daily Free Limit Reached",
+                        message: data.message || "To ensure high quality and prevent platform abuse, free tier users can launch 1 successful campaign per day. Please try again tomorrow!"
+                      });
+                    } else if (data.code === "SERVER_BUSY" || res.status === 503) {
+                      setApiError({
+                        code: data.code || "SERVER_BUSY",
+                        title: "System At Capacity",
+                        message: data.message || "Our execution queues are currently full (500 active jobs). Please wait a few minutes and try again."
+                      });
+                    } else {
+                      setApiError({
+                        title: "Campaign Enqueue Failed",
+                        message: data.error || data.message || "An unexpected error occurred while launching your campaign."
+                      });
+                    }
                   }
                 } catch (e) {
-                  alert("Failed to enqueue campaign");
+                  setApiError({
+                    title: "Network Error",
+                    message: "Unable to connect to Pulsar servers. Please check your internet connection."
+                  });
                 }
               }}
+
               stepCircleContainerClassName="!rounded-2xl"
               stepContainerClassName="!px-10 !py-8 !border-b border-[#2A2A2A]"
               contentClassName="!p-0"

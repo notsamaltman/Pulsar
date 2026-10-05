@@ -445,3 +445,28 @@ def save_profiles_to_catalogue_sync(profiles: List[Dict[str, Any]], niche: str =
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=1) as executor:
         return executor.submit(lambda: asyncio.run(save_profiles_to_catalogue(profiles, niche))).result()
+
+async def mark_user_first_job_done(user_id: str):
+    if not user_id:
+        return
+    try:
+        db = Prisma()
+        await db.connect()
+        query = """
+        UPDATE users
+        SET "firstSuccessfulJobAt" = NOW()
+        WHERE id = $1 AND "firstSuccessfulJobAt" IS NULL;
+        """
+        await db.execute_raw(query, user_id)
+        await db.disconnect()
+        print(f"[+] Updated firstSuccessfulJobAt for user {user_id}")
+    except Exception as e:
+        print(f"[-] Error updating firstSuccessfulJobAt for user {user_id}: {e}")
+
+def mark_user_first_job_done_sync(user_id: str):
+    if not user_id:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(lambda: asyncio.run(mark_user_first_job_done(user_id))).result()
+

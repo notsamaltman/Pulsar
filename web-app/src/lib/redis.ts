@@ -56,4 +56,57 @@ export function getRedisConnection(): IORedis {
   return redisConnectionInstance;
 }
 
+
+export interface GroqStatus {
+  status: 'AVAILABLE' | 'TEMPORARILY_RATE_LIMITED' | 'DAILY_QUOTA_EXHAUSTED' | 'UNAVAILABLE';
+  resetAt: number | null; // Unix timestamp in ms
+  remainingRequests?: number;
+  remainingTokens?: number;
+  message?: string;
+}
+
+export async function getGroqStatus(): Promise<GroqStatus> {
+  const redis = getRedisConnection();
+  try {
+    const data = await redis.get('groq:status_info');
+    if (data) {
+      const parsed = JSON.parse(data);
+      // Check if reset time has passed
+      if (parsed.resetAt && Date.now() >= parsed.resetAt) {
+        return { status: 'AVAILABLE', resetAt: null };
+      }
+      return parsed;
+    }
+  } catch (e) {
+    console.error('Error fetching Groq status from Redis:', e);
+  }
+  return { status: 'AVAILABLE', resetAt: null };
+}
+
+export async function setGroqStatus(statusInfo: GroqStatus): Promise<void> {
+  const redis = getRedisConnection();
+  try {
+    await redis.set('groq:status_info', JSON.stringify(statusInfo));
+  } catch (e) {
+    console.error('Error setting Groq status in Redis:', e);
+  }
+}
+
+/**
+ * Checks if user has a successful job today or currently active lock.
+ * Uses atomic Redis SETNX key to prevent simultaneous double-enqueue race conditions.
+ */
+export async function acquireUserJobLock(userId: string, ttlSeconds: number = 30): Promise<boolean> {
+  const redis = getRedisConnection();
+  const lockKey = `user:job_lock:${userId}`;
+  const result = await redis.set(lockKey, 'locked', 'EX', ttlSeconds, 'NX');
+  return result === 'OK';
+}
+
+export async function releaseUserJobLock(userId: string): Promise<void> {
+  const redis = getRedisConnection();
+  await redis.del(`user:job_lock:${userId}`);
+}
+
 export default getRedisConnection;
+

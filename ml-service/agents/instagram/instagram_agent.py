@@ -54,8 +54,8 @@ class InstagramAgentState(TypedDict):
 
 
 def _get_page():
-    """Returns a thread-safe page object. Uses CDP connection if in a child thread."""
-    global page, _main_thread_id
+    """Returns an isolated, production-safe Playwright page instance without relying on local Chrome profile or CDP."""
+    global page, browser_context, playwright_instance
     
     # Check thread-local storage first
     if hasattr(_thread_local, "page") and _thread_local.page:
@@ -65,44 +65,26 @@ def _get_page():
         except Exception:
             _thread_local.page = None
 
-    # Main thread can use the global handle
-    if threading.get_ident() == _main_thread_id:
-        if page:
-            try:
-                page.url
-                _thread_local.page = page
-                return page
-            except Exception:
-                pass
-
-    # All other threads (or main thread if global is missing) connect via CDP
     try:
         from playwright.sync_api import sync_playwright
         if not hasattr(_thread_local, "playwright") or not _thread_local.playwright:
             _thread_local.playwright = sync_playwright().start()
-        
-        browser = _thread_local.playwright.chromium.connect_over_cdp("http://localhost:9222", timeout=10000)
+
+        headless_env = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
+        browser = _thread_local.playwright.chromium.launch(
+            headless=headless_env,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
         _thread_local.browser = browser
-        
-        if browser.contexts:
-            ctx = browser.contexts[0]
-            if ctx.pages:
-                _thread_local.page = ctx.pages[0]
-            else:
-                _thread_local.page = ctx.new_page()
-        else:
-            ctx = browser.new_context()
-            _thread_local.page = ctx.new_page()
-            
+        ctx = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800}
+        )
+        _thread_local.context = ctx
+        _thread_local.page = ctx.new_page()
         return _thread_local.page
     except Exception as e:
-        print(f"[-] Thread {threading.get_ident()} failed to connect via CDP: {e}")
-        if page:
-            try:
-                page.url
-                return page
-            except Exception:
-                pass
+        print(f"[-] Error initializing isolated Playwright browser: {e}")
         raise e
 
 def _get_context():
@@ -112,6 +94,25 @@ def _get_context():
         return _thread_local.context
     _get_page()
     return getattr(_thread_local, "context", browser_context)
+
+def cleanup_browser_resources():
+    """Safely closes Playwright pages, context, and browser for thread-local or global instances."""
+    try:
+        if hasattr(_thread_local, "page") and _thread_local.page:
+            _thread_local.page.close()
+            _thread_local.page = None
+        if hasattr(_thread_local, "context") and _thread_local.context:
+            _thread_local.context.close()
+            _thread_local.context = None
+        if hasattr(_thread_local, "browser") and _thread_local.browser:
+            _thread_local.browser.close()
+            _thread_local.browser = None
+        if hasattr(_thread_local, "playwright") and _thread_local.playwright:
+            _thread_local.playwright.stop()
+            _thread_local.playwright = None
+    except Exception as e:
+        print(f"[!] Warning during browser cleanup: {e}")
+
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(parent_dir)

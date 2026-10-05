@@ -63,6 +63,12 @@ export default function CampaignDetailView({
   const [jobState, setJobState] = useState<string>("running");
   const [loading, setLoading] = useState<boolean>(true);
   const [deleting, setDeleting] = useState<boolean>(false);
+  const [queueInfo, setQueueInfo] = useState<{
+    queuePosition?: number;
+    estimatedEtaSeconds?: number;
+    totalWaiting?: number;
+    groqStatus?: { isExhausted: boolean; resetAt?: string; retryAfterSeconds?: number };
+  } | null>(null);
 
   useEffect(() => {
     const fetchCampaignData = async () => {
@@ -80,7 +86,28 @@ export default function CampaignDetailView({
       }
     };
 
+
     fetchCampaignData();
+
+    const fetchQueueStatus = async () => {
+      try {
+        const qRes = await fetch(`/api/queue/status?jobId=${campaignId}`);
+        if (qRes.ok) {
+          const qData = await qRes.json();
+          setQueueInfo({
+            queuePosition: qData.jobDetail?.queuePosition,
+            estimatedEtaSeconds: qData.jobDetail?.estimatedEtaSeconds,
+            totalWaiting: qData.totalWaiting,
+            groqStatus: qData.groqStatus
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching queue status:", err);
+      }
+    };
+
+    fetchQueueStatus();
+    const queueInterval = setInterval(fetchQueueStatus, 5000);
 
     const eventSource = new EventSource(`/api/campaigns/${campaignId}/stream`);
 
@@ -100,8 +127,10 @@ export default function CampaignDetailView({
 
     return () => {
       eventSource.close();
+      clearInterval(queueInterval);
     };
   }, [campaignId]);
+
 
   const handleDeleteCampaign = async () => {
     if (!confirm(`Are you sure you want to delete campaign "${campaignName}"? Leads extracted will be preserved in your database.`)) {
@@ -261,8 +290,46 @@ export default function CampaignDetailView({
         </div>
       </div>
 
+      {/* Groq Quota Exhausted Callout */}
+      {queueInfo?.groqStatus?.isExhausted && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-amber-300">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-amber-200">Groq API Rate Limit Reached</p>
+              <p className="text-xs text-amber-300/80">
+                Pulsar is safely holding your job in queue. Execution will automatically resume when Groq resets around{" "}
+                <strong className="text-amber-100">{queueInfo.groqStatus.resetAt || "shortly"}</strong>.
+              </p>
+            </div>
+          </div>
+          {queueInfo.groqStatus.retryAfterSeconds && (
+            <span className="text-xs font-mono font-bold bg-amber-500/20 px-3 py-1 rounded-md border border-amber-500/30">
+              ~{Math.ceil(queueInfo.groqStatus.retryAfterSeconds / 60)}m left
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Queue Position & ETA Callout */}
+      {jobState === "waiting" && queueInfo?.queuePosition && queueInfo.queuePosition > 0 && (
+        <div className="p-4 rounded-xl bg-[#BC66FF]/10 border border-[#BC66FF]/30 flex items-center justify-between text-[#BC66FF]">
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[#BC66FF]" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-white">Job Queued — Position #{queueInfo.queuePosition}</p>
+              <p className="text-xs text-[#BC66FF]/80">
+                Priority scheduling active. Estimated time until execution starts:{" "}
+                <strong className="text-white">~{Math.ceil((queueInfo.estimatedEtaSeconds || 60) / 60)} minutes</strong>.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stats Cards Bar */}
       <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
+
         <div className="bg-[#171717] border border-[#222222] p-3 sm:p-5 rounded-xl space-y-1 sm:space-y-2 shadow-sm">
           <div className="flex items-center justify-between text-[#666666]">
             <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest">TOTAL LEADS</span>
