@@ -132,9 +132,9 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
   if (!session || !company) return null;
 
   return (
-    <div className="flex h-screen bg-[#121212] text-white overflow-hidden font-sans">
-      {/* Sidebar */}
-      <aside className="w-14 border-r border-[#222222] bg-[#0E0E0E] flex flex-col items-center py-6 gap-6">
+    <div className="flex flex-col md:flex-row h-screen bg-[#121212] text-white overflow-hidden font-sans">
+      {/* Sidebar - Desktop */}
+      <aside className="hidden md:flex w-14 border-r border-[#222222] bg-[#0E0E0E] flex-col items-center py-6 gap-6 shrink-0">
         <div 
           onClick={() => router.push('/dashboard')}
           className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 cursor-pointer hover:bg-white/10 transition-colors"
@@ -148,6 +148,7 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
               setActiveTab("campaigns");
             }}
             className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all ${activeTab === "campaigns" ? 'bg-[#BC66FF]/20 text-[#BC66FF]' : 'text-[#333333] hover:text-white'}`}
+            title="Campaigns"
           >
             <BarChart3 className="w-4 h-4" />
           </button>
@@ -157,6 +158,7 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
               setActiveTab("settings");
             }}
             className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all ${activeTab === "settings" ? 'bg-[#BC66FF]/20 text-[#BC66FF]' : 'text-[#333333] hover:text-white'}`}
+            title="Settings"
           >
             <Settings className="w-4 h-4" />
           </button>
@@ -164,9 +166,9 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 bg-[#121212]">
-        <header className="px-6 h-12 border-b border-[#222222] flex items-center justify-between bg-[#121212]/80 backdrop-blur-md">
-           <div className="flex items-center gap-2.5 text-[10px] font-bold uppercase tracking-wider">
+      <main className="flex-1 flex flex-col min-w-0 bg-[#121212] overflow-hidden">
+        <header className="px-4 sm:px-6 h-14 border-b border-[#222222] flex items-center justify-between bg-[#121212]/90 backdrop-blur-md shrink-0">
+           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider overflow-hidden">
               <button 
                 onClick={() => {
                   if (selectedCampaign) {
@@ -175,22 +177,43 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
                     router.push('/dashboard');
                   }
                 }}
-                className="text-[#555555] hover:text-white transition-colors flex items-center gap-1.5"
+                className="text-[#555555] hover:text-white transition-colors flex items-center gap-1 shrink-0"
               >
-                <ArrowLeft className="w-3 h-3" />
-                <span>Dashboard</span>
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Dashboard</span>
               </button>
               <span className="text-[#222222]">/</span>
-              <span className="text-[#666666]">{session.user?.name}</span>
-              <span className="text-[#222222]">/</span>
-              <span className="text-[#666666]">{company.name}</span>
+              <span className="text-[#666666] truncate max-w-[70px] sm:max-w-[120px]">{company.name}</span>
               {selectedCampaign && (
                 <>
                   <span className="text-[#222222]">/</span>
-                  <span className="text-[#BC66FF]">{selectedCampaign.name}</span>
+                  <span className="text-[#BC66FF] truncate max-w-[90px] sm:max-w-[150px]">{selectedCampaign.name}</span>
                 </>
               )}
            </div>
+
+           {/* Mobile Tab Switcher */}
+           <div className="flex md:hidden items-center bg-[#171717] border border-[#222222] rounded-lg p-0.5 mx-2">
+             <button
+               onClick={() => {
+                 setSelectedCampaign(null);
+                 setActiveTab("campaigns");
+               }}
+               className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${activeTab === "campaigns" ? "bg-[#BC66FF] text-black" : "text-[#777777]"}`}
+             >
+               Campaigns
+             </button>
+             <button
+               onClick={() => {
+                 setSelectedCampaign(null);
+                 setActiveTab("settings");
+               }}
+               className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${activeTab === "settings" ? "bg-[#BC66FF] text-black" : "text-[#777777]"}`}
+             >
+               Settings
+             </button>
+           </div>
+
            <LogoutButton />
         </header>
 
@@ -208,22 +231,22 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
               }}
             />
           ) : (
-            <div className="px-8 py-8">
+            <div className="px-4 sm:px-8 py-4 sm:py-8">
               <div className="max-w-5xl mx-auto">
-                <div className="flex items-end justify-between mb-10">
-                   <div className="space-y-3">
-                      <h1 className="text-3xl font-black tracking-tighter">{company.name}</h1>
-                      <div className="flex items-center gap-5">
-                        <a href={company.website || "#"} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[11px] text-[#666666] hover:text-[#BC66FF] transition-colors">
-                          <ExternalLink className="w-2.5 h-2.5" />
-                          {company.website || "No website"}
+                <div className="flex items-center justify-between mb-6 sm:mb-10 gap-3">
+                   <div className="space-y-1 min-w-0">
+                      <h1 className="text-xl sm:text-3xl font-black tracking-tighter truncate">{company.name}</h1>
+                      <div className="flex items-center gap-3">
+                        <a href={company.website || "#"} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] sm:text-[11px] text-[#666666] hover:text-[#BC66FF] transition-colors truncate">
+                          <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                          <span className="truncate">{company.website || "No website"}</span>
                         </a>
                       </div>
                    </div>
                    {activeTab === "campaigns" && (
                      <button 
                        onClick={() => setIsCampaignModalOpen(true)}
-                       className="bg-white text-black px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center gap-1.5 grayscale hover:grayscale-0 shadow-lg shadow-white/5"
+                       className="bg-white text-black px-3.5 sm:px-5 py-2 sm:py-2 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center gap-1.5 grayscale hover:grayscale-0 shadow-lg shadow-white/5 shrink-0 whitespace-nowrap"
                      >
                        <Plus className="w-3 h-3" />
                        New Campaign
@@ -232,19 +255,19 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
                 </div>
 
                 {activeTab === "campaigns" ? (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="space-y-4 sm:space-y-6">
+                    <div className="grid grid-cols-3 gap-2 sm:gap-3">
                        {[
-                         { label: "Total Campaigns", value: campaigns.length.toString(), icon: <Target className="w-3.5 h-3.5 text-purple-400" /> },
-                         { label: "Leads Detected", value: campaigns.reduce((acc, c) => acc + (c._count?.campaignLeads || 0), 0).toString(), icon: <Users className="w-3.5 h-3.5 text-indigo-400" /> },
-                         { label: "Active Responses", value: "0", icon: <Zap className="w-3.5 h-3.5 text-emerald-400" /> }
+                         { label: "Campaigns", value: campaigns.length.toString(), icon: <Target className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-purple-400" /> },
+                         { label: "Leads", value: campaigns.reduce((acc, c) => acc + (c._count?.campaignLeads || 0), 0).toString(), icon: <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-400" /> },
+                         { label: "Responses", value: "0", icon: <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" /> }
                        ].map((stat, i) => (
-                         <div key={i} className="bg-[#171717] border border-[#2A2A2A] p-5 rounded-xl space-y-3 shadow-md">
+                         <div key={i} className="bg-[#171717] border border-[#2A2A2A] p-2.5 sm:p-5 rounded-xl space-y-1 sm:space-y-3 shadow-md">
                             <div className="flex items-center justify-between text-white">
-                              <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{stat.label}</span>
+                              <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider text-slate-400 truncate">{stat.label}</span>
                               {stat.icon}
                             </div>
-                            <div className="text-xl font-black">{stat.value}</div>
+                            <div className="text-base sm:text-xl font-black">{stat.value}</div>
                          </div>
                        ))}
                     </div>
@@ -263,55 +286,68 @@ export default function CompanyDashboardPage({ params }: { params: Promise<{ use
                       <div className="space-y-3">
                         <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">Campaigns ({campaigns.length})</h3>
                         <div className="grid grid-cols-1 gap-3">
-                          {campaigns.map((camp) => (
-                            <div
-                              key={camp.id}
-                              onClick={() => setSelectedCampaign(camp)}
-                              className="bg-[#171717] border border-[#2A2A2A] hover:border-[#BC66FF]/40 rounded-xl p-5 flex items-center justify-between cursor-pointer transition duration-200 group"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div className="p-3 rounded-lg bg-[#BC66FF]/10 text-[#BC66FF] border border-[#BC66FF]/20 group-hover:scale-105 transition">
-                                  <Sparkles className="w-5 h-5" />
-                                </div>
-                                <div>
-                                  <h4 className="font-bold text-base text-white group-hover:text-[#BC66FF] transition">
-                                    {camp.name}
-                                  </h4>
-                                  <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
-                                    <span>Industry: <strong className="text-slate-200">{camp.industry}</strong></span>
-                                    <span>•</span>
-                                    <span>Geo: <strong className="text-slate-200">{camp.geoTarget}</strong></span>
-                                    <span>•</span>
-                                    <span>Target: <strong className="text-slate-200">{camp.targetProfile}</strong></span>
+                          {campaigns.map((camp) => {
+                            const targetWords = (camp.targetProfile || "").split(/\s+/);
+                            const truncatedTarget = targetWords.length > 5 
+                              ? targetWords.slice(0, 5).join(" ") + "..." 
+                              : camp.targetProfile;
+
+                            return (
+                              <div
+                                key={camp.id}
+                                onClick={() => setSelectedCampaign(camp)}
+                                className="bg-[#171717] border border-[#2A2A2A] hover:border-[#BC66FF]/40 rounded-xl p-3.5 sm:p-5 flex items-center justify-between cursor-pointer transition duration-200 group gap-2 sm:gap-4"
+                              >
+                                <div className="flex items-center gap-2.5 sm:gap-4 min-w-0 flex-1">
+                                  <div className="p-2 sm:p-3 rounded-lg bg-[#BC66FF]/10 text-[#BC66FF] border border-[#BC66FF]/20 group-hover:scale-105 transition shrink-0">
+                                    <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <h4 className="font-bold text-xs sm:text-base text-white group-hover:text-[#BC66FF] transition truncate">
+                                      {camp.name}
+                                    </h4>
+                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1">
+                                      <span>Industry: <strong className="text-slate-200">{camp.industry}</strong></span>
+                                      <span className="hidden xs:inline">•</span>
+                                      <span>Geo: <strong className="text-slate-200">{camp.geoTarget}</strong></span>
+                                      {camp.targetProfile && (
+                                        <>
+                                          <span className="hidden sm:inline">•</span>
+                                          <span className="w-full sm:w-auto truncate block sm:inline">
+                                            Target: <strong className="text-slate-200">{truncatedTarget}</strong>
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
 
-                              <div className="flex items-center gap-4">
-                                <div className="text-right">
-                                  <span className="text-xs text-slate-400 block">Staged Leads</span>
-                                  <span className="text-sm font-bold text-purple-300">
-                                    {camp._count?.campaignLeads || 0} leads
-                                  </span>
+                                <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+                                  <div className="text-right">
+                                    <span className="text-[9px] sm:text-xs text-slate-400 block">Staged</span>
+                                    <span className="text-xs sm:text-sm font-bold text-purple-300">
+                                      {camp._count?.campaignLeads || 0} leads
+                                    </span>
+                                  </div>
+                                  
+                                  <button
+                                    onClick={(e) => handleDeleteCampaign(e, camp.id, camp.name)}
+                                    disabled={deletingId === camp.id}
+                                    className="p-1.5 sm:p-2 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                                    title="Delete Campaign"
+                                  >
+                                    {deletingId === camp.id ? (
+                                      <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin text-rose-400" />
+                                    ) : (
+                                      <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                    )}
+                                  </button>
+
+                                  <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-slate-500 group-hover:text-white transition hidden xs:block" />
                                 </div>
-                                
-                                <button
-                                  onClick={(e) => handleDeleteCampaign(e, camp.id, camp.name)}
-                                  disabled={deletingId === camp.id}
-                                  className="p-2 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                                  title="Delete Campaign"
-                                >
-                                  {deletingId === camp.id ? (
-                                    <Loader2 className="w-4 h-4 animate-spin text-rose-400" />
-                                  ) : (
-                                    <Trash2 className="w-4 h-4" />
-                                  )}
-                                </button>
-
-                                <ChevronRight className="w-5 h-5 text-slate-500 group-hover:text-white transition" />
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}

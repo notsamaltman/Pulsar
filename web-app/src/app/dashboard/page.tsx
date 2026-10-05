@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   
   // Delete state
   const [companyToDelete, setCompanyToDelete] = useState<Company | null>(null);
@@ -85,9 +86,9 @@ export default function DashboardPage() {
     .toUpperCase() || "PI";
 
   return (
-    <div className="flex h-screen bg-[#121212] text-white overflow-hidden font-sans">
-      {/* Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 border-r border-[#222222] bg-[#0E0E0E] px-3 py-4">
+    <div className="flex h-screen bg-[#121212] text-white overflow-hidden font-sans relative">
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex flex-col w-64 border-r border-[#222222] bg-[#0E0E0E] px-3 py-4 shrink-0">
         {/* Logo Section */}
         <div className="px-2 mb-10 mt-6 flex items-center gap-3">
           <div className="w-8 h-8 flex items-center justify-center overflow-hidden rounded-md bg-white/5 shadow-[0_0_10px_rgba(255,255,255,0.05)]">
@@ -124,47 +125,117 @@ export default function DashboardPage() {
         </div>
       </aside>
 
+      {/* Mobile Drawer Overlay */}
+      <AnimatePresence>
+        {mobileSidebarOpen && (
+          <div className="fixed inset-0 z-50 md:hidden flex">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileSidebarOpen(false)} 
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.aside 
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="relative w-72 bg-[#0E0E0E] border-r border-[#222222] p-5 flex flex-col z-10"
+            >
+              <div className="flex items-center justify-between pb-6 border-b border-[#222222] mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 flex items-center justify-center rounded-md bg-white/5">
+                    <img src="/logo.png" className="w-full h-full object-cover" alt="Pulsar" />
+                  </div>
+                  <span className="text-sm font-bold tracking-widest uppercase">Pulsar</span>
+                </div>
+                <button 
+                  onClick={() => setMobileSidebarOpen(false)}
+                  className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              <div className="flex-1 space-y-2">
+                <button 
+                  onClick={() => setMobileSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm bg-[#171717] text-white font-semibold"
+                >
+                  <LayoutGrid className="w-4 h-4 text-[#BC66FF]" />
+                  <span>Companies</span>
+                </button>
+              </div>
+
+              <div className="pt-4 border-t border-[#222222] flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-[#BC66FF]/20 flex items-center justify-center text-xs font-bold ring-1 ring-[#BC66FF]/30">
+                    {session.user?.image ? (
+                      <img src={session.user.image} alt="" className="w-full h-full object-cover rounded-full" />
+                    ) : (
+                      userInitials
+                    )}
+                  </div>
+                  <span className="text-xs font-medium text-slate-300 truncate max-w-[130px]">{session.user?.name}</span>
+                </div>
+                <LogoutButton />
+              </div>
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 bg-[#121212] overflow-hidden">
         {/* Header */}
-        <div className="border-b border-[#222222] sticky top-0 bg-[#121212]/80 backdrop-blur-md z-20">
-          <div className="px-8 h-14 flex items-center justify-between">
+        <div className="border-b border-[#222222] sticky top-0 bg-[#121212]/90 backdrop-blur-md z-20">
+          <div className="px-4 sm:px-8 h-14 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="text-[#666666] text-[10px] font-bold uppercase tracking-wider">{session.user?.name?.split(" ")[0]}</span>
+              <button 
+                onClick={() => setMobileSidebarOpen(true)}
+                className="md:hidden p-1.5 rounded-md bg-[#1A1A1A] text-slate-300 hover:text-white border border-[#2A2A2A]"
+                aria-label="Open sidebar"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+              </button>
+              <span className="text-[#666666] text-[10px] font-bold uppercase tracking-wider truncate max-w-[80px] sm:max-w-none">{session.user?.name?.split(" ")[0]}</span>
               <span className="text-[#2A2A2A]">/</span>
               <span className="text-white text-[10px] font-bold uppercase tracking-wider">Companies</span>
             </div>
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-4 sm:gap-6">
                <LogoutButton />
             </div>
           </div>
         </div>
 
         {/* Action Bar */}
-        <div className="px-8 py-6 border-b border-[#1A1A1A]">
-           <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4 w-full max-w-sm">
+        <div className="px-4 sm:px-8 py-4 sm:py-6 border-b border-[#1A1A1A]">
+           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:max-w-md">
                 <div className="relative w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-[#444444]" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#444444]" />
                   <input 
                     placeholder="Search for a company" 
-                    className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-md pl-9 pr-4 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#3A3A3A] transition-colors"
+                    className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-md pl-9 pr-4 py-2 text-xs text-white focus:outline-none focus:border-[#3A3A3A] transition-colors"
                   />
                 </div>
-                <button className="flex items-center gap-1.5 px-3 py-1.5 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#555555] hover:text-white transition-colors uppercase tracking-widest">
-                  <Filter className="w-2.5 h-2.5" />
-                  Status
-                </button>
-                <button className="flex items-center gap-1.5 px-3 py-1.5 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#555555] hover:text-white transition-colors shrink-0 uppercase tracking-widest">
-                  <ArrowUpDown className="w-2.5 h-2.5" />
-                  Name
-                </button>
+                <div className="flex items-center gap-2">
+                  <button className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#666666] hover:text-white transition-colors uppercase tracking-widest">
+                    <Filter className="w-2.5 h-2.5" />
+                    Status
+                  </button>
+                  <button className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#666666] hover:text-white transition-colors uppercase tracking-widest shrink-0">
+                    <ArrowUpDown className="w-2.5 h-2.5" />
+                    Name
+                  </button>
+                </div>
               </div>
               <button 
                 onClick={() => setIsModalOpen(true)}
-                className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-md text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all shadow-[0_0_20px_rgba(255,255,255,0.05)]"
+                className="flex items-center justify-center gap-2 bg-white text-black px-4 py-2.5 rounded-md text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all shadow-[0_0_20px_rgba(255,255,255,0.05)] w-full sm:w-auto"
               >
-                <Plus className="w-3 h-3" />
+                <Plus className="w-3.5 h-3.5" />
                 New Company
               </button>
            </div>

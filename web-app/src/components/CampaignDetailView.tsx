@@ -206,7 +206,7 @@ export default function CampaignDetailView({
   const isRunning = jobState === "running" || jobState === "active" || jobState === "waiting";
 
   return (
-    <div className="w-full min-h-screen bg-[#121212] text-white p-8 flex flex-col gap-6 font-sans max-w-7xl mx-auto">
+    <div className="w-full min-h-screen bg-[#121212] text-white p-4 sm:p-8 flex flex-col gap-4 sm:gap-6 font-sans max-w-7xl mx-auto">
       {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between border-b border-[#222222] pb-6 gap-4">
         <div className="space-y-1.5">
@@ -262,81 +262,75 @@ export default function CampaignDetailView({
       </div>
 
       {/* Stats Cards Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="bg-[#171717] border border-[#222222] p-5 rounded-xl space-y-2 shadow-sm">
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
+        <div className="bg-[#171717] border border-[#222222] p-3 sm:p-5 rounded-xl space-y-1 sm:space-y-2 shadow-sm">
           <div className="flex items-center justify-between text-[#666666]">
-            <span className="text-[10px] font-bold uppercase tracking-widest">TOTAL LEADS DISCOVERED</span>
-            <Users className="w-4 h-4 text-[#BC66FF]" />
+            <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest">TOTAL LEADS</span>
+            <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#BC66FF]" />
           </div>
-          <div className="text-2xl font-black text-white">{leads.length}</div>
+          <div className="text-lg sm:text-2xl font-black text-white">{leads.length}</div>
         </div>
 
-        <div className="bg-[#171717] border border-[#222222] p-5 rounded-xl space-y-2 shadow-sm">
+        <div className="bg-[#171717] border border-[#222222] p-3 sm:p-5 rounded-xl space-y-1 sm:space-y-2 shadow-sm">
           <div className="flex items-center justify-between text-[#666666]">
-            <span className="text-[10px] font-bold uppercase tracking-widest">ACTIVE PLATFORMS</span>
-            <Layers className="w-4 h-4 text-indigo-400" />
+            <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest">PLATFORMS</span>
+            <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400" />
           </div>
-          <div className="text-2xl font-black text-white">3 Channels</div>
+          <div className="text-lg sm:text-2xl font-black text-white">3 Channels</div>
         </div>
       </div>
 
       {/* 3 Platform Lead Tabs Bar */}
-      <div className="flex items-center gap-3 border-b border-[#222222] pb-4 mt-2">
+      <div className="grid grid-cols-3 gap-1.5 sm:flex sm:items-center sm:gap-3 border-b border-[#222222] pb-3 sm:pb-4 mt-1 sm:mt-2 w-full">
         <button
           onClick={() => setActiveTab("youtube")}
-          className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+          className={`flex items-center justify-center sm:justify-start gap-1 sm:gap-2 px-1 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[9px] sm:text-xs font-bold uppercase tracking-wider transition-all min-w-0 ${
             activeTab === "youtube"
               ? "bg-[#BC66FF]/15 text-[#BC66FF] border border-[#BC66FF]/30 shadow-[0_0_15px_rgba(188,102,255,0.1)]"
               : "bg-[#171717] text-[#666666] border border-[#222222] hover:text-white hover:border-[#333333]"
           }`}
         >
           {isRunning ? (
-            <Loader2 className="w-4 h-4 text-[#BC66FF] animate-spin" />
+            <Loader2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#BC66FF] animate-spin shrink-0" />
           ) : (
-            <YoutubeIcon className="w-4 h-4" />
+            <YoutubeIcon className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           )}
-          <span>YouTube ({youtubeLeads.length})</span>
-          {isRunning && (
-            <span className="w-2 h-2 rounded-full bg-[#BC66FF] animate-ping" />
-          )}
+          <span className="sm:hidden truncate">YT ({youtubeLeads.length})</span>
+          <span className="hidden sm:inline">YouTube ({youtubeLeads.length})</span>
         </button>
 
         <button
           onClick={() => setActiveTab("instagram")}
-          className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+          className={`flex items-center justify-center sm:justify-start gap-1 sm:gap-2 px-1 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[9px] sm:text-xs font-bold uppercase tracking-wider transition-all min-w-0 ${
             activeTab === "instagram"
               ? "bg-[#BC66FF]/15 text-[#BC66FF] border border-[#BC66FF]/30 shadow-[0_0_15px_rgba(188,102,255,0.1)]"
               : "bg-[#171717] text-[#666666] border border-[#222222] hover:text-white hover:border-[#333333]"
           }`}
         >
           {isRunning ? (
-            <Loader2 className="w-4 h-4 text-[#BC66FF] animate-spin" />
+            <Loader2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#BC66FF] animate-spin shrink-0" />
           ) : (
-            <InstagramIcon className="w-4 h-4" />
+            <InstagramIcon className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           )}
-          <span>Instagram ({instagramLeads.length})</span>
-          {isRunning && (
-            <span className="w-2 h-2 rounded-full bg-[#BC66FF] animate-ping" />
-          )}
+          <span className="sm:hidden truncate">IG ({instagramLeads.length})</span>
+          <span className="hidden sm:inline">Instagram ({instagramLeads.length})</span>
         </button>
 
         <button
           onClick={() => setActiveTab("producthunt")}
-          className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+          className={`flex items-center justify-center sm:justify-start gap-1 sm:gap-2 px-1 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[9px] sm:text-xs font-bold uppercase tracking-wider transition-all min-w-0 ${
             activeTab === "producthunt"
               ? "bg-[#BC66FF]/15 text-[#BC66FF] border border-[#BC66FF]/30 shadow-[0_0_15px_rgba(188,102,255,0.1)]"
               : "bg-[#171717] text-[#666666] border border-[#222222] hover:text-white hover:border-[#333333]"
           }`}
         >
           {isRunning ? (
-            <Loader2 className="w-4 h-4 text-[#BC66FF] animate-spin" />
+            <Loader2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#BC66FF] animate-spin shrink-0" />
           ) : (
-            <Rocket className="w-4 h-4" />
+            <Rocket className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           )}
-          <span>ProductHunt ({producthuntLeads.length})</span>
-          {isRunning && (
-            <span className="w-2 h-2 rounded-full bg-[#BC66FF] animate-ping" />
-          )}
+          <span className="sm:hidden truncate">PH ({producthuntLeads.length})</span>
+          <span className="hidden sm:inline">ProductHunt ({producthuntLeads.length})</span>
         </button>
       </div>
 
@@ -371,7 +365,7 @@ export default function CampaignDetailView({
           </div>
         )
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
           {isRunning && (
             <div className="flex items-center justify-between px-5 py-4 rounded-xl bg-[#BC66FF]/10 border border-[#BC66FF]/30 text-xs text-white col-span-full shadow-md">
               <div className="flex items-center gap-3">
@@ -407,12 +401,12 @@ export default function CampaignDetailView({
             return (
               <div
                 key={lead.id}
-                className="bg-[#171717] border border-[#222222] hover:border-[#333333] rounded-xl p-6 flex flex-col justify-between gap-5 transition-all shadow-md group"
+                className="bg-[#171717] border border-[#222222] hover:border-[#333333] rounded-xl p-3 sm:p-6 flex flex-col justify-between gap-3 sm:gap-5 transition-all shadow-md group"
               >
-                <div className="space-y-4">
+                <div className="space-y-2 sm:space-y-4">
                   {/* Lead Profile Header */}
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[#BC66FF]/20 flex items-center justify-center font-bold text-xs text-[#BC66FF] overflow-hidden shrink-0 border border-[#BC66FF]/30">
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-full bg-[#BC66FF]/20 flex items-center justify-center font-bold text-[10px] sm:text-xs text-[#BC66FF] overflow-hidden shrink-0 border border-[#BC66FF]/30">
                       {prof.profile_pic_url ? (
                         <img src={prof.profile_pic_url} alt={name} className="w-full h-full object-cover" />
                       ) : (
@@ -420,29 +414,29 @@ export default function CampaignDetailView({
                       )}
                     </div>
                     <div className="min-w-0">
-                      <h4 className="font-bold text-sm text-white group-hover:text-[#BC66FF] transition truncate">
+                      <h4 className="font-bold text-xs sm:text-sm text-white group-hover:text-[#BC66FF] transition truncate">
                         {name}
                       </h4>
-                      <p className="text-xs text-[#BC66FF] font-mono truncate">@{handle}</p>
+                      <p className="text-[10px] sm:text-xs text-[#BC66FF] font-mono truncate">@{handle}</p>
                     </div>
                   </div>
 
                   {/* Bio */}
-                  <p className="text-xs text-[#888888] line-clamp-2 leading-relaxed">
+                  <p className="text-[10px] sm:text-xs text-[#888888] line-clamp-2 leading-relaxed">
                     {bio}
                   </p>
 
                   {/* 5-Post Thumbnail Grid */}
                   {thumbnails.length > 0 && (
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#666666] block">
+                    <div className="space-y-1.5 sm:space-y-2">
+                      <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-wider text-[#666666] block">
                         Recent Content ({thumbnails.length})
                       </span>
-                      <div className="grid grid-cols-5 gap-2">
+                      <div className="grid grid-cols-5 gap-1 sm:gap-2">
                         {thumbnails.map((imgUrl, idx) => (
                           <div
                             key={idx}
-                            className="aspect-square bg-[#121212] border border-[#222222] rounded-lg overflow-hidden group/img relative"
+                            className="aspect-square bg-[#121212] border border-[#222222] rounded-md sm:rounded-lg overflow-hidden group/img relative"
                           >
                             <img
                               src={imgUrl}
@@ -459,41 +453,41 @@ export default function CampaignDetailView({
                   )}
 
                   {/* Key Metrics Row */}
-                  <div className="grid grid-cols-3 gap-2 py-2.5 px-3 rounded-lg bg-[#121212] border border-[#222222] text-center text-xs">
+                  <div className="grid grid-cols-3 gap-1 sm:gap-2 py-1.5 sm:py-2.5 px-1.5 sm:px-3 rounded-lg bg-[#121212] border border-[#222222] text-center text-[10px] sm:text-xs">
                     <div>
-                      <span className="text-[9px] font-bold uppercase text-[#555555] block">Followers</span>
-                      <p className="font-bold text-white mt-0.5">{followers ? followers.toLocaleString() : "N/A"}</p>
+                      <span className="text-[7px] sm:text-[9px] font-bold uppercase text-[#555555] block">Followers</span>
+                      <p className="font-bold text-white text-[9px] sm:text-xs mt-0.5">{followers ? followers.toLocaleString() : "N/A"}</p>
                     </div>
                     <div>
-                      <span className="text-[9px] font-bold uppercase text-[#555555] block">Eng. Rate</span>
-                      <p className="font-bold text-white mt-0.5">{engagement ? `${(engagement * 100).toFixed(1)}%` : "N/A"}</p>
+                      <span className="text-[7px] sm:text-[9px] font-bold uppercase text-[#555555] block">Eng. Rate</span>
+                      <p className="font-bold text-white text-[9px] sm:text-xs mt-0.5">{engagement ? `${(engagement * 100).toFixed(1)}%` : "N/A"}</p>
                     </div>
                     <div>
-                      <span className="text-[9px] font-bold uppercase text-[#555555] block">Geo</span>
-                      <p className="font-bold text-white mt-0.5 truncate">{country}</p>
+                      <span className="text-[7px] sm:text-[9px] font-bold uppercase text-[#555555] block">Geo</span>
+                      <p className="font-bold text-white text-[9px] sm:text-xs mt-0.5 truncate">{country}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Footer Actions */}
-                <div className="flex items-center justify-between border-t border-[#222222] pt-3 text-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-[#222222] pt-2 sm:pt-3 text-[10px] sm:text-xs gap-1 sm:gap-0">
                   {email ? (
-                    <span className="flex items-center gap-1.5 text-slate-300 truncate max-w-[170px]">
-                      <Mail className="w-3.5 h-3.5 text-[#BC66FF] shrink-0" />
-                      <span className="truncate text-xs">{email}</span>
+                    <span className="flex items-center gap-1 sm:gap-1.5 text-slate-300 truncate max-w-full sm:max-w-[170px]">
+                      <Mail className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#BC66FF] shrink-0" />
+                      <span className="truncate text-[10px] sm:text-xs">{email}</span>
                     </span>
                   ) : (
-                    <span className="text-xs text-[#555555] italic">No public email</span>
+                    <span className="text-[10px] sm:text-xs text-[#555555] italic">No public email</span>
                   )}
 
                   <a
                     href={profileUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-[#BC66FF] font-bold hover:underline transition ml-auto"
+                    className="flex items-center gap-1 text-[#BC66FF] font-bold hover:underline transition sm:ml-auto text-[10px] sm:text-xs"
                   >
                     <span>Visit Profile</span>
-                    <ExternalLink className="w-3 h-3" />
+                    <ExternalLink className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                   </a>
                 </div>
               </div>

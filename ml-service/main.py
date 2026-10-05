@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from agents.company_builder import CompanyBuilder
 from agents.master_agent import MasterAgent
 
+import urllib.request
+import urllib.error
+
 load_dotenv()
 
 async def company_profile_builder(job:bullmq.Job, job_token:str):
@@ -44,6 +47,31 @@ def get_redis_url() -> str:
         return f"rediss://{host}:6379"
     return "redis://localhost:6379"
 
+async def heartbeat_poller(shutdown_event: asyncio.Event):
+    app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "http://localhost:3000"
+    health_endpoint = f"{app_url.rstrip('/')}/api/service-health"
+    print(f"[+] Heartbeat poller started. Target: {health_endpoint}")
+
+    def send_pulse():
+        try:
+            req = urllib.request.Request(
+                health_endpoint,
+                data=b'{}',
+                headers={'Content-Type': 'application/json', 'User-Agent': 'Pulsar-MLService-Heartbeat'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                return response.status == 200
+        except Exception as e:
+            return False
+
+    while not shutdown_event.is_set():
+        await asyncio.to_thread(send_pulse)
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            pass
+
 async def main():
     # Create an event that will be triggered for shutdown
     shutdown_event = asyncio.Event()
@@ -61,14 +89,18 @@ async def main():
     master_agent_worker = Worker("master-queue", master_agent_handler, {"connection": redis_url})
     print("[+] Workers started: company_build-queue, master-queue")
 
+    # Start heartbeat task
+    heartbeat_task = asyncio.create_task(heartbeat_poller(shutdown_event))
+
     # Wait until the shutdown event is set
     await shutdown_event.wait()
 
     # close the worker
     print("Cleaning up workers...")
+    await heartbeat_task
     await company_profile_worker.close()
     await master_agent_worker.close()
     print("Workers shut down successfully.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main())

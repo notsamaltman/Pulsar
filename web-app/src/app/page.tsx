@@ -21,6 +21,8 @@ export default function Home() {
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
 
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   useEffect(() => {
     setIsMounted(true);
     if (status === "authenticated") {
@@ -31,9 +33,9 @@ export default function Home() {
   return (
     <div className="relative min-h-screen selection:bg-primary/30">
       {/* Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-background/50 backdrop-blur-xl border-b border-white/5 transition-all duration-300">
-        <div className="flex justify-between items-center w-full px-8 py-5 max-w-7xl mx-auto">
-          <div className="flex items-center gap-12">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-white/5 transition-all duration-300">
+        <div className="flex justify-between items-center w-full px-4 sm:px-8 py-4 max-w-7xl mx-auto">
+          <div className="flex items-center gap-8 md:gap-12">
             <Link href="/" className="flex items-center gap-3 text-xl font-bold tracking-tight text-white group">
               <div className="w-8 h-8 flex items-center justify-center overflow-hidden rounded-md bg-white/5 shadow-[0_0_15px_rgba(196,192,255,0.1)] transition-transform group-hover:scale-105">
                 <img src="/logo.png" className="w-full h-full object-cover" alt="Pulsar" />
@@ -46,14 +48,51 @@ export default function Home() {
               <Link href="#pricing" className="text-on-surface-variant hover:text-white transition-colors">Pricing</Link>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-4">
             <Link href="/login">
               <button className="px-5 py-2 text-sm font-medium bg-white text-black rounded-lg hover:bg-gray-200 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.15)] hover:shadow-[0_0_25px_rgba(255,255,255,0.25)]">
                 Get Started
               </button>
             </Link>
           </div>
+          {/* Mobile menu trigger */}
+          <div className="md:hidden flex items-center gap-3">
+            <Link href="/login">
+              <button className="px-3.5 py-1.5 text-xs font-semibold bg-white text-black rounded-lg">
+                Start
+              </button>
+            </Link>
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="p-2 rounded-lg bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-colors"
+              aria-label="Toggle mobile menu"
+            >
+              {mobileMenuOpen ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+              )}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile Navigation Drawer */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-white/10 bg-[#0E0E10]/95 backdrop-blur-2xl px-6 py-6 space-y-4 animate-in slide-in-from-top-2 duration-200">
+            <div className="flex flex-col gap-4 text-base font-medium text-slate-300">
+              <Link href="#solution" onClick={() => setMobileMenuOpen(false)} className="hover:text-white py-1">Platform</Link>
+              <Link href="#features" onClick={() => setMobileMenuOpen(false)} className="hover:text-white py-1">Solutions</Link>
+              <Link href="#pricing" onClick={() => setMobileMenuOpen(false)} className="hover:text-white py-1">Pricing</Link>
+              <div className="pt-2 border-t border-white/10">
+                <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
+                  <button className="w-full py-3 text-sm font-semibold bg-white text-black rounded-xl hover:bg-gray-200 transition-colors text-center">
+                    Get Started Now
+                  </button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
 
       <main>
@@ -75,18 +114,18 @@ export default function Home() {
             )}
           </div>
           
-          <div className="relative z-10 max-w-7xl mx-auto px-8 w-full flex flex-col items-start text-left">
+          <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-8 w-full flex flex-col items-start text-left">
 
             <TextReveal 
               text="Self-learning personalized sales outreach." 
-              className="text-6xl md:text-8xl font-bold tracking-tighter leading-[1.05] text-white max-w-5xl mb-8 font-headline"
+              className="text-4xl sm:text-6xl md:text-8xl font-bold tracking-tighter leading-[1.1] text-white max-w-5xl mb-6 sm:mb-8 font-headline"
             />
             
             <motion.p 
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.4 }}
-              className="text-lg md:text-xl text-on-surface-variant max-w-2xl leading-relaxed font-light mb-12"
+              className="text-base sm:text-lg md:text-xl text-on-surface-variant max-w-2xl leading-relaxed font-light mb-8 sm:mb-12"
             >
               Stop spending hours finding leads. Pulsar finds new business opportunities and sends personalized messages for you, automatically.
             </motion.p>
@@ -95,18 +134,18 @@ export default function Home() {
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.6 }}
-              className="flex flex-col sm:flex-row gap-4 items-center"
+              className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center w-full sm:w-auto"
             >
-              <Link href="/login">
-                <button className="group relative px-8 py-4 bg-white text-black font-medium rounded-xl overflow-hidden shadow-[0_0_40px_rgba(255,255,255,0.2)] hover:shadow-[0_0_60px_rgba(196,192,255,0.4)] transition-all duration-300">
+              <Link href="/login" className="w-full sm:w-auto">
+                <button className="w-full sm:w-auto group relative px-8 py-4 bg-white text-black font-semibold rounded-xl overflow-hidden shadow-[0_0_40px_rgba(255,255,255,0.2)] hover:shadow-[0_0_60px_rgba(196,192,255,0.4)] transition-all duration-300 flex items-center justify-center">
                   <span className="relative z-10 flex items-center gap-2">
                     Start automating <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                   </span>
                   <div className="absolute inset-0 bg-primary opacity-0 group-hover:opacity-20 transition-opacity duration-300" />
                 </button>
               </Link>
-              <Link href="#solution">
-                <button className="px-8 py-4 bg-white/5 text-white font-medium rounded-xl border border-white/10 hover:bg-white/10 backdrop-blur-sm transition-all duration-300">
+              <Link href="#solution" className="w-full sm:w-auto">
+                <button className="w-full sm:w-auto px-8 py-4 bg-white/5 text-white font-medium rounded-xl border border-white/10 hover:bg-white/10 backdrop-blur-sm transition-all duration-300 text-center">
                   See how it works
                 </button>
               </Link>

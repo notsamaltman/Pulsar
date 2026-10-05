@@ -135,11 +135,11 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            className="w-full max-w-2xl bg-[#171717] rounded-2xl border border-[#2A2A2A] overflow-hidden flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.5)] relative z-10"
+            className="w-full max-w-xl sm:max-w-2xl max-h-[90vh] bg-[#171717] rounded-2xl border border-[#2A2A2A] overflow-y-auto flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.5)] relative z-10"
           >
             {loading && !showResultForm ? (
-              <div className="flex flex-col items-center justify-center py-32 px-10 text-center space-y-12">
-                <div className="relative flex items-center justify-center scale-150">
+              <div className="flex flex-col items-center justify-center py-20 sm:py-32 px-6 sm:px-10 text-center space-y-8 sm:space-y-12">
+                <div className="relative flex items-center justify-center scale-125 sm:scale-150">
                   <motion.div
                     animate={{ rotate: 360 }}
                     transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
@@ -171,7 +171,7 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                     </div>
                   </div>
                   <div className="space-y-4">
-                    <p className="text-white text-2xl font-black uppercase tracking-[0.3em] animate-pulse">
+                    <p className="text-white text-xl sm:text-2xl font-black uppercase tracking-[0.3em] animate-pulse">
                       {progress?.message || "Please wait..."}
                     </p>
                     <p className="text-[#666666] text-sm max-w-sm mx-auto leading-relaxed">
@@ -183,13 +183,13 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
             ) : showResultForm ? (
               <div className="flex flex-col h-full max-h-[85vh]">
                 {/* Result Header */}
-                <div className="px-8 pt-8 pb-3 border-b border-[#2A2A2A] flex justify-between items-start">
+                <div className="px-6 sm:px-8 pt-6 sm:pt-8 pb-3 border-b border-[#2A2A2A] flex justify-between items-start">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-2 mb-0.5">
                       <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                       <span className="text-[10px] uppercase font-bold tracking-widest text-[#555555]">Build Complete</span>
                     </div>
-                    <h2 className="text-2xl font-bold text-white tracking-tight">Review & Edit</h2>
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Review & Edit</h2>
                   </div>
                   <button onClick={onClose} className="text-[#444444] hover:text-white transition-colors">
                     <X className="w-5 h-5" />
@@ -197,8 +197,8 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 </div>
 
                 {/* Result Form */}
-                <div className="px-8 py-8 space-y-8 overflow-y-auto min-h-[400px]">
-                  <div className="grid grid-cols-2 gap-6">
+                <div className="px-6 sm:px-8 py-6 sm:py-8 space-y-6 overflow-y-auto min-h-[300px]">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Name</label>
                       <input 
@@ -220,7 +220,7 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Generated Summary</label>
                     <textarea 
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors min-h-[260px] leading-relaxed resize-none" 
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors min-h-[180px] sm:min-h-[260px] leading-relaxed resize-none" 
                       value={resultData.summary}
                       onChange={(e) => setResultData({ ...resultData, summary: e.target.value })}
                     />
@@ -228,21 +228,21 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 </div>
 
                 {/* Result Actions */}
-                <div className="px-8 py-6 bg-[#131313] border-t border-[#2A2A2A] flex items-center justify-between">
-                  <p className="text-[11px] text-[#444444] max-w-[240px]">
+                <div className="px-6 sm:px-8 py-4 sm:py-6 bg-[#131313] border-t border-[#2A2A2A] flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <p className="text-[11px] text-[#444444] text-center sm:text-left">
                     You can refine the AI-generated summary before finalizing the company record.
                   </p>
-                  <div className="flex gap-4">
+                  <div className="flex gap-4 w-full sm:w-auto justify-end">
                     <button 
                       onClick={() => setShowResultForm(false)}
-                      className="text-xs font-bold text-[#666666] hover:text-white transition-colors uppercase tracking-wider"
+                      className="text-xs font-bold text-[#666666] hover:text-white transition-colors uppercase tracking-wider px-2"
                     >
                       Back
                     </button>
                     <button 
                       disabled={saving}
                       onClick={handleFinalSave}
-                      className="bg-white text-black px-8 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center gap-2 disabled:opacity-50"
+                      className="bg-white text-black px-6 sm:px-8 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center justify-center gap-2 disabled:opacity-50 flex-1 sm:flex-none"
                     >
                       {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                       {saving ? "Saving..." : "Confirm & Save"}
@@ -253,29 +253,29 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
             ) : (
               <>
                 {/* Modal Header */}
-                <div className="px-8 pt-10 pb-6 relative">
+                <div className="px-6 sm:px-8 pt-8 sm:pt-10 pb-4 sm:pb-6 relative">
                   <button 
                     onClick={onClose}
-                    className="absolute top-8 right-8 text-[#444444] hover:text-white transition-colors"
+                    className="absolute top-6 sm:top-8 right-6 sm:right-8 text-[#444444] hover:text-white transition-colors"
                   >
                     <X className="w-5 h-5" />
                   </button>
                   
-                  <div className="flex items-center gap-3 mb-3">
+                  <div className="flex items-center gap-3 mb-2">
                     <div className="w-6 h-6 flex items-center justify-center overflow-hidden rounded bg-white/10 ring-1 ring-white/20">
                       <img src="/favicon.ico" className="w-4 h-4 object-contain brightness-0 invert" alt="Pulsar" />
                     </div>
                     <span className="text-[10px] uppercase tracking-[0.25em] text-[#555555] font-bold">New Entity</span>
                   </div>
-                  <h2 className="text-3xl font-bold text-white tracking-tight">Register Company</h2>
-                  <p className="text-[#666666] text-[13px] mt-2 leading-relaxed max-w-sm">
+                  <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Register Company</h2>
+                  <p className="text-[#666666] text-[12px] sm:text-[13px] mt-1 sm:mt-2 leading-relaxed max-w-sm">
                     Initiate Pulsar&apos;s intelligent analysis to build your company profile.
                   </p>
                 </div>
 
                 {/* Form Section */}
-                <form className="px-8 pb-10 space-y-6" onSubmit={handleSubmit}>
-                  <div className="grid grid-cols-2 gap-6">
+                <form className="px-6 sm:px-8 pb-8 sm:pb-10 space-y-5 sm:space-y-6" onSubmit={handleSubmit}>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Company Name</label>
                       <input 
