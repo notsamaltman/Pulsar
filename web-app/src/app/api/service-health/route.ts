@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRedisConnection } from "@/lib/redis";
+import { getRedisConnection, getGroqStatus, enrichGroqStatus } from "@/lib/redis";
 
 const HEARTBEAT_KEY = "service_health:ml_service";
 const HEARTBEAT_TIMEOUT_MS = 30000; // 30 seconds threshold
@@ -33,11 +33,19 @@ export async function GET() {
   const now = Date.now();
   const mlServiceActive = lastHeartbeat !== null && (now - lastHeartbeat) < HEARTBEAT_TIMEOUT_MS;
 
+  let groqStatus = enrichGroqStatus({ status: "AVAILABLE", resetAt: null });
+  try {
+    groqStatus = enrichGroqStatus(await getGroqStatus());
+  } catch (error) {
+    console.error("Failed to query Groq status:", error);
+  }
+
   return NextResponse.json({
     status: mlServiceActive ? "healthy" : "degraded",
     mlServiceActive,
     lastHeartbeat,
     timeSinceLastHeartbeatMs: lastHeartbeat ? now - lastHeartbeat : null,
+    groqStatus,
     source,
     timestamp: now,
   });

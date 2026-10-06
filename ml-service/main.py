@@ -1,38 +1,119 @@
 import bullmq
-from bullmq import Worker
+from bullmq import Worker, Queue
 import asyncio
 import signal
 import os
-import json
+import time
 from dotenv import load_dotenv
 from agents.company_builder import CompanyBuilder
 from agents.master_agent import MasterAgent
+from utils.llm import (
+    GroqQuotaExhaustedError,
+    check_groq_availability,
+    clear_groq_status_if_reset,
+    looks_like_groq_limit,
+)
 
 import urllib.request
 import urllib.error
 
 load_dotenv()
 
+def _job_priority(job: bullmq.Job) -> int:
+    opts = getattr(job, "opts", None) or {}
+    if isinstance(opts, dict):
+        return int(opts.get("priority") or 5)
+    return int(getattr(opts, "priority", None) or 5)
+
+def _campaign_id_from_job(job: bullmq.Job):
+    job_data = job.data or {}
+    return job_data.get("jobId") or job_data.get("campaignId") or job_data.get("campaign_id")
+
+async def requeue_job_on_groq_exhaustion(job: bullmq.Job, queue_name: str, err: Exception):
+    """Requeue the active job at a lower priority and mark the campaign as queued.
+
+    Completes the current attempt so BullMQ does not retry at the original priority.
+    The replacement job is delayed until Groq's reset window.
+    """
+    reset_at = getattr(err, "reset_at", None)
+    now = time.time()
+    if reset_at:
+        delay_ms = max(int((reset_at - now) * 1000), 60_000)
+    else:
+        delay_ms = 15 * 60 * 1000
+
+    current_priority = _job_priority(job)
+    # BullMQ: higher number = lower priority. Cap at 20.
+    new_priority = min(max(current_priority, 5) + 5, 20)
+    campaign_id = _campaign_id_from_job(job)
+    job_data = dict(job.data or {})
+    job_data["groqRequeueCount"] = int(job_data.get("groqRequeueCount") or 0) + 1
+
+    print(
+        f"[!] Groq exhausted — requeueing job {job.id} on {queue_name} "
+        f"priority {current_priority} → {new_priority}, delay {delay_ms}ms"
+    )
+
+    await job.updateProgress({
+        "status": "queued",
+        "message": "API limit exhausted. Job requeued at lower priority; system on idle check.",
+        "groqIdle": True,
+    })
+
+    if campaign_id:
+        try:
+            from utils.lead_db import update_campaign_status
+            await update_campaign_status(campaign_id, "queue")
+        except Exception as st_err:
+            print(f"[!] Warning setting campaign {campaign_id} status to queue: {st_err}")
+
+    request_queue = Queue(queue_name, {"connection": get_redis_url()})
+    try:
+        await request_queue.add(
+            f"{campaign_id or job.id}-{queue_name}-{int(now * 1000)}",
+            job_data,
+            {
+                "priority": new_priority,
+                "delay": delay_ms,
+                "removeOnComplete": {"age": 3600, "count": 100},
+                "removeOnFail": {"age": 86400, "count": 500},
+            },
+        )
+    finally:
+        await request_queue.close()
+
+    try:
+        from agents.instagram.instagram_agent import cleanup_browser_resources
+        cleanup_browser_resources()
+    except Exception as e:
+        print(f"[!] Warning closing browser while Groq idle: {e}")
+
 async def company_profile_builder(job:bullmq.Job, job_token:str):
     try:
+        check_groq_availability()
         builder = CompanyBuilder(job)
         await builder.run()
         print(f"Job {job.id} completed successfully")
     except Exception as e:
-        err_str = str(e)
-        if "Groq" in err_str or "rate limit" in err_str.lower() or "429" in err_str:
-            print(f"[!] Job {job.id} paused due to Groq rate limit: {err_str}")
-            await job.updateProgress({"status": "waiting_for_groq", "message": "Groq API temporarily rate-limited. Job safely paused."})
+        if looks_like_groq_limit(e):
+            print(f"[!] Job {job.id} requeued due to Groq rate limit: {e}")
+            await requeue_job_on_groq_exhaustion(job, "company_build-queue", e)
         else:
-            print(f"Error processing job {job.id}: {err_str}")
-            await job.updateProgress({"status": "failed", "message": f"Error: {err_str}"})
+            print(f"Error processing job {job.id}: {e}")
+            await job.updateProgress({"status": "failed", "message": f"Error: {e}"})
 
 async def master_agent_handler(job:bullmq.Job, job_token:str):
     """Handles jobs from master-queue — fans out ICP to all sub-agents."""
-    job_data = job.data or {}
-    campaign_id = job_data.get("jobId") or job_data.get("campaignId") or job_data.get("campaign_id")
+    campaign_id = _campaign_id_from_job(job)
     print(f"[master-queue] Received job {job.id} for campaign {campaign_id}")
-    
+
+    try:
+        check_groq_availability()
+    except GroqQuotaExhaustedError as e:
+        print(f"[master-queue] Groq idle — not starting job {job.id}: {e}")
+        await requeue_job_on_groq_exhaustion(job, "master-queue", e)
+        return
+
     if campaign_id:
         try:
             from utils.lead_db import update_campaign_status
@@ -51,13 +132,12 @@ async def master_agent_handler(job:bullmq.Job, job_token:str):
             except Exception as st_err:
                 print(f"[!] Warning setting campaign {campaign_id} status to complete: {st_err}")
     except Exception as e:
-        err_str = str(e)
-        if "Groq" in err_str or "rate limit" in err_str.lower() or "429" in err_str:
-            print(f"[master-queue] Job {job.id} paused due to Groq rate limit: {err_str}")
-            await job.updateProgress({"status": "waiting_for_groq", "message": "Groq API temporarily rate-limited. Job safely paused."})
+        if looks_like_groq_limit(e):
+            print(f"[master-queue] Job {job.id} requeued due to Groq rate limit: {e}")
+            await requeue_job_on_groq_exhaustion(job, "master-queue", e)
         else:
-            print(f"[master-queue] Error processing job {job.id}: {err_str}")
-            await job.updateProgress({"status": "failed", "message": f"Error: {err_str}"})
+            print(f"[master-queue] Error processing job {job.id}: {e}")
+            await job.updateProgress({"status": "failed", "message": f"Error: {e}"})
             if campaign_id:
                 try:
                     from utils.lead_db import update_campaign_status
@@ -93,6 +173,17 @@ async def heartbeat_poller(shutdown_event: asyncio.Event):
         await asyncio.to_thread(send_pulse)
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            pass
+
+async def groq_idle_checker(shutdown_event: asyncio.Event):
+    """While Groq is rate-limited, sit idle and poll until the window resets."""
+    print("[+] Groq idle checker started.")
+    while not shutdown_event.is_set():
+        still_blocked = await asyncio.to_thread(clear_groq_status_if_reset)
+        wait = 15.0 if still_blocked else 30.0
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=wait)
         except asyncio.TimeoutError:
             pass
 
@@ -135,15 +226,17 @@ async def main():
     master_agent_worker.on("drained", _on_master_drained)
 
     heartbeat_task = asyncio.create_task(heartbeat_poller(shutdown_event))
+    groq_idle_task = asyncio.create_task(groq_idle_checker(shutdown_event))
 
     await shutdown_event.wait()
 
     print("Cleaning up workers...")
     await heartbeat_task
+    await groq_idle_task
     await company_profile_worker.close()
     await master_agent_worker.close()
     print("Workers shut down successfully.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main())

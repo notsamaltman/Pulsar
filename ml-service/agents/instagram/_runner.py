@@ -27,6 +27,8 @@ _mlservice_root = os.path.abspath(os.path.join(_file_dir, "..", ".."))
 sys.path.insert(0, _mlservice_root)
 
 from dotenv import load_dotenv
+from utils.llm import GroqQuotaExhaustedError
+
 load_dotenv(os.path.join(_mlservice_root, ".env"))
 
 
@@ -68,6 +70,16 @@ def main() -> None:
             "leads": leads,
             "lead_count": len(leads),
             "error": final_state.get("error"),
+        }
+    except GroqQuotaExhaustedError as e:
+        traceback.print_exc(file=sys.stderr)
+        result = {
+            "platform": "instagram",
+            "leads": [],
+            "lead_count": 0,
+            "error": str(e),
+            "error_type": "groq_quota",
+            "reset_at": e.reset_at,
         }
     except Exception as e:
         traceback.print_exc(file=sys.stderr)

@@ -108,11 +108,18 @@ export default function CampaignDetailView({
         const qRes = await fetch(`/api/queue/status?jobId=${campaignId}`);
         if (qRes.ok) {
           const qData = await qRes.json();
+          const groq = qData.groqStatus;
           setQueueInfo({
             queuePosition: qData.jobDetail?.queuePosition,
             estimatedEtaSeconds: qData.jobDetail?.estimatedEtaSeconds,
             totalWaiting: qData.totalWaiting,
-            groqStatus: qData.groqStatus
+            groqStatus: groq
+              ? {
+                  isExhausted: !!groq.isExhausted,
+                  resetAt: groq.resetAtLabel || groq.resetAt,
+                  retryAfterSeconds: groq.retryAfterSeconds,
+                }
+              : undefined,
           });
         }
       } catch (err) {
@@ -400,7 +407,7 @@ export default function CampaignDetailView({
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-amber-200">Groq API Rate Limit Reached</p>
               <p className="text-xs text-amber-300/80">
-                Holding job safely in queue. Processing will automatically resume when Groq resets around{" "}
+                Job requeued at lower priority. System is on idle check until Groq resets around{" "}
                 <strong className="text-amber-100">{queueInfo.groqStatus.resetAt || "shortly"}</strong>.
               </p>
             </div>
@@ -469,7 +476,9 @@ export default function CampaignDetailView({
             <div className={`text-[10px] ${
               campaignStatus === "queue" ? "text-gray-500" : "text-blue-500/70"
             }`}>
-              {campaignStatus === "queue"
+              {queueInfo?.groqStatus?.isExhausted
+                ? "API limit exhausted — job requeued, system on idle check"
+                : campaignStatus === "queue"
                 ? `Position #${queueInfo?.queuePosition || 1} — waiting to start`
                 : "Agent extracting leads now..."}
             </div>

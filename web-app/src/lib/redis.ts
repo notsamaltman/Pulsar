@@ -80,6 +80,39 @@ export async function setGroqStatus(statusInfo: GroqStatus): Promise<void> {
   }
 }
 
+export function isGroqExhausted(status: GroqStatus | null | undefined): boolean {
+  if (!status) return false;
+  return (
+    status.status === 'TEMPORARILY_RATE_LIMITED' ||
+    status.status === 'DAILY_QUOTA_EXHAUSTED' ||
+    status.status === 'UNAVAILABLE'
+  );
+}
+
+export interface EnrichedGroqStatus extends GroqStatus {
+  isExhausted: boolean;
+  retryAfterSeconds?: number;
+  resetAtLabel?: string;
+}
+
+export function enrichGroqStatus(status: GroqStatus): EnrichedGroqStatus {
+  const exhausted = isGroqExhausted(status);
+  const retryAfterSeconds =
+    exhausted && status.resetAt
+      ? Math.max(0, Math.ceil((status.resetAt - Date.now()) / 1000))
+      : undefined;
+  const resetAtLabel =
+    exhausted && status.resetAt
+      ? new Date(status.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : undefined;
+  return {
+    ...status,
+    isExhausted: exhausted,
+    retryAfterSeconds,
+    resetAtLabel,
+  };
+}
+
 /**
  * Checks if user has a successful job today or currently active lock.
  * Uses atomic Redis SETNX key to prevent simultaneous double-enqueue race conditions.

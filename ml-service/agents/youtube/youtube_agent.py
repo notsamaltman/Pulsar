@@ -25,7 +25,7 @@ except ImportError:
 
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
-from utils.llm import get_groq_llm
+from utils.llm import get_groq_llm, GroqQuotaExhaustedError, check_groq_availability, looks_like_groq_limit, raise_groq_quota_from_error
 
 
 # ==========================================
@@ -595,7 +595,10 @@ class YouTubeLeadAgent:
         llm = None
         if groq_api_key:
             try:
+                check_groq_availability()
                 llm = get_groq_llm()
+            except GroqQuotaExhaustedError:
+                raise
             except Exception as e:
                 print(f"[-] LLM initialization warning: {e}")
 
@@ -637,7 +640,7 @@ class YouTubeLeadAgent:
             ]
             """
 
-            # Execute LLM call with retry mechanism for rate limits (429)
+            # Execute LLM call with retry; Groq 429 immediately requeues the job
             res_content = None
             max_retries = 3
             for attempt in range(max_retries):
@@ -645,15 +648,13 @@ class YouTubeLeadAgent:
                     res = llm.invoke(prompt)
                     res_content = res.content.strip()
                     break
+                except GroqQuotaExhaustedError:
+                    raise
                 except Exception as e:
-                    err_str = str(e).lower()
-                    if "429" in err_str or "rate limit" in err_str or "quota" in err_str:
-                        wait_time = 10 * (attempt + 1)
-                        print(f"[!] Rate limit encountered on batch LLM call. Pausing {wait_time}s (attempt {attempt + 1}/{max_retries})...")
-                        time.sleep(wait_time)
-                    else:
-                        print(f"[-] LLM batch invoke error: {e}")
-                        break
+                    if looks_like_groq_limit(e):
+                        raise_groq_quota_from_error(e)
+                    print(f"[-] LLM batch invoke error: {e}")
+                    break
 
             if res_content:
                 try:

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Queue } from 'bullmq';
-import { getRedisConnection, getGroqStatus } from '@/lib/redis';
+import { getRedisConnection, getGroqStatus, enrichGroqStatus } from '@/lib/redis';
 import { getQueueTotalJobs } from '@/lib/queue';
 
 export async function GET(req: NextRequest) {
@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     const totalWaiting = await masterQueue.getWaitingCount();
     const totalActive = await masterQueue.getActiveCount();
     const totalQueueSize = await getQueueTotalJobs();
-    const groqStatus = await getGroqStatus();
+    const groqStatus = enrichGroqStatus(await getGroqStatus());
 
     let jobDetail = null;
 

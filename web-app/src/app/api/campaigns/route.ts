@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import { getRedisConnection, getGroqStatus } from "@/lib/redis";
+import { getRedisConnection, getGroqStatus, isGroqExhausted } from "@/lib/redis";
 
 export async function GET(req: NextRequest) {
   try {
@@ -37,9 +37,7 @@ export async function GET(req: NextRequest) {
       console.warn("Could not query master-queue for campaign ETAs:", e);
     }
 
-    const isGroqExhausted = groqStatus?.status === 'TEMPORARILY_RATE_LIMITED' || 
-                            groqStatus?.status === 'DAILY_QUOTA_EXHAUSTED' || 
-                            groqStatus?.status === 'UNAVAILABLE';
+    const isGroqExhaustedFlag = isGroqExhausted(groqStatus);
 
     const enrichedCampaigns = campaigns.map((camp) => {
       const status = (camp.status || "queue").toLowerCase();
@@ -48,7 +46,7 @@ export async function GET(req: NextRequest) {
 
       let etaDisplay = "~5 min";
 
-      if (isGroqExhausted) {
+      if (isGroqExhaustedFlag) {
         etaDisplay = "Long time";
       } else if (isQueued) {
         const queueIndex = waitingJobs.findIndex((j) => j.id === camp.id);
@@ -63,7 +61,7 @@ export async function GET(req: NextRequest) {
       return {
         ...camp,
         eta: etaDisplay,
-        isGroqExhausted,
+        isGroqExhausted: isGroqExhaustedFlag,
         groqStatus,
       };
     });

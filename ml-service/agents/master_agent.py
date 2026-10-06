@@ -13,12 +13,14 @@ import json
 import asyncio
 import threading
 import traceback
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
 
 import bullmq
 from bullmq import Queue
 from dotenv import load_dotenv
+from utils.llm import GroqQuotaExhaustedError, looks_like_groq_limit
 
 # --- Ensure parent is on path for utils imports ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -186,6 +188,18 @@ async def _push_to_result_queue(queue_name: str, results: Dict[str, Any], redis_
 # Sub-Agent Runners (executed in ThreadPool)
 # ============================================================
 
+def _raise_if_groq_result(result: Dict[str, Any]) -> None:
+    """Sub-agents often return Groq failures as error dicts — bubble them to the worker."""
+    if not result:
+        return
+    if result.get("error_type") == "groq_quota" or looks_like_groq_limit(result.get("error")):
+        reset_at = result.get("reset_at") or (time.time() + 900)
+        raise GroqQuotaExhaustedError(
+            reset_at=float(reset_at),
+            message=str(result.get("error") or "Groq API rate limit reached."),
+        )
+
+
 def _run_instagram(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Runs the Instagram agent in a completely isolated subprocess.
 
@@ -311,8 +325,11 @@ def _run_instagram(payload: Dict[str, Any]) -> Dict[str, Any]:
         result = _parse_result(stdout)
         lead_count = result.get("lead_count", 0)
         print(f"[MasterAgent] ← Instagram agent finished with {lead_count} leads")
+        _raise_if_groq_result(result)
         return result
 
+    except GroqQuotaExhaustedError:
+        raise
     except _json.JSONDecodeError as e:
         print(f"[MasterAgent] ✗ Instagram subprocess returned invalid JSON: {e}")
         return {
@@ -339,13 +356,19 @@ def _run_youtube(payload: Dict[str, Any]) -> Dict[str, Any]:
         result = agent.run(payload)
         leads = result.get("staged_leads", [])
         print(f"[MasterAgent] ← YouTube agent finished with {len(leads)} leads")
-        return {
+        yt_result = {
             "platform": "youtube",
             "leads": leads,
             "lead_count": len(leads),
             "error": result.get("error"),
         }
+        _raise_if_groq_result(yt_result)
+        return yt_result
+    except GroqQuotaExhaustedError:
+        raise
     except Exception as e:
+        if looks_like_groq_limit(e):
+            raise
         print(f"[MasterAgent] ✗ YouTube agent error: {e}")
         traceback.print_exc()
         return {"platform": "youtube", "leads": [], "lead_count": 0, "error": str(e)}
@@ -360,13 +383,19 @@ def _run_producthunt(payload: Dict[str, Any]) -> Dict[str, Any]:
         result = agent.run(payload)
         leads = result.get("scored_leads", [])
         print(f"[MasterAgent] ← ProductHunt agent finished with {len(leads)} leads")
-        return {
+        ph_result = {
             "platform": "producthunt",
             "leads": leads,
             "lead_count": len(leads),
             "error": result.get("error"),
         }
+        _raise_if_groq_result(ph_result)
+        return ph_result
+    except GroqQuotaExhaustedError:
+        raise
     except Exception as e:
+        if looks_like_groq_limit(e):
+            raise
         print(f"[MasterAgent] ✗ ProductHunt agent error: {e}")
         traceback.print_exc()
         return {"platform": "producthunt", "leads": [], "lead_count": 0, "error": str(e)}
@@ -464,6 +493,7 @@ class MasterAgent:
                 try:
                     result = await fut
                     result["campaign_id"] = campaign_id
+                    _raise_if_groq_result(result)
                     all_results[platform] = result
 
                     # Push to platform-specific result queue
@@ -475,7 +505,14 @@ class MasterAgent:
                         "platform_done": platform,
                         "lead_count": result.get("lead_count", 0),
                     })
+                except GroqQuotaExhaustedError:
+                    raise
                 except Exception as e:
+                    if looks_like_groq_limit(e):
+                        raise GroqQuotaExhaustedError(
+                            reset_at=time.time() + 900,
+                            message=str(e),
+                        ) from e
                     print(f"[MasterAgent] ✗ Error awaiting {platform}: {e}")
                     traceback.print_exc()
                     all_results[platform] = {

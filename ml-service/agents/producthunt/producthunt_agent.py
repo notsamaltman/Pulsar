@@ -16,7 +16,7 @@ load_dotenv()
 
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
-from utils.llm import get_groq_llm
+from utils.llm import get_groq_llm, GroqQuotaExhaustedError, check_groq_availability, looks_like_groq_limit, raise_groq_quota_from_error
 
 PRODUCTHUNT_API = "https://api.producthunt.com/v2/api/graphql"
 
@@ -481,7 +481,10 @@ class ProductHuntLeadAgent:
         llm = None
         if groq_api_key:
             try:
+                check_groq_availability()
                 llm = get_groq_llm()
+            except GroqQuotaExhaustedError:
+                raise
             except Exception as e:
                 print(f"[-] LLM init warning: {e}")
                 
@@ -517,7 +520,11 @@ class ProductHuntLeadAgent:
                         lead["reasoning"] = parsed.get("reasoning", lead.get("reasoning"))
                         lead["tier"] = "hot"
                         scored_leads.append(lead)
+                except GroqQuotaExhaustedError:
+                    raise
                 except Exception as e:
+                    if looks_like_groq_limit(e):
+                        raise_groq_quota_from_error(e)
                     print(f"[-] LLM DB score fallback for {lead.get('username')}: {e}")
                     lead["tier"] = "hot"
                     scored_leads.append(lead)

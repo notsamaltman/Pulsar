@@ -21,7 +21,7 @@ import operator
 # --- Add parent path to import utils ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils.lead_db import search_existing_leads_sync, save_leads_to_supabase_sync, search_existing_leads_by_niche_sync, save_profiles_to_catalogue_sync
-from utils.llm import get_groq_llm
+from utils.llm import get_groq_llm, invoke_groq_json
 
 # --- Global Storage for Intercepted Data ---
 INTERCEPTED_DATA = []
@@ -1035,37 +1035,8 @@ def get_instagram_llm():
         return None
 
 def invoke_llm_with_retry(prompt: str, max_retries: int = 3) -> Optional[Dict[str, Any]]:
-    """Invokes LLM with retries and robust JSON extraction."""
-    llm_inst = get_instagram_llm()
-    if not llm_inst:
-        return None
-    for i in range(max_retries):
-        try:
-            # Add a small delay between retries
-            if i > 0:
-                time.sleep(random.uniform(1.0, 3.0))
-                
-            response = llm_inst.invoke(prompt)
-            content = response.content.strip() if hasattr(response, 'content') else str(response).strip()
-            
-            if not content:
-                print(f"[-] Attempt {i+1}: Received empty response from LLM.")
-                continue
-
-            # Robust JSON extraction
-            if "{" in content and "}" in content:
-                json_str = content[content.find("{"):content.rfind("}")+1]
-                data = json.loads(json_str)
-                return data
-            else:
-                # Try to clean common LLM garbage
-                cleaned = content.replace("```json", "").replace("```", "").strip()
-                return json.loads(cleaned)
-        except Exception as e:
-            print(f"[-] Attempt {i+1} failed ({type(e).__name__}): {e}")
-            if i == max_retries - 1:
-                return None
-    return None
+    """Invokes LLM with retries and robust JSON extraction via shared Groq helper."""
+    return invoke_groq_json(prompt, temperature=0.0, retries=max_retries)
 
 def push_leads(leads: List[Dict[str, Any]], campaign_id: Optional[str] = None, niche: str = ""):
     """Pushes staged leads to global memory and persists to Supabase with vector embeddings."""

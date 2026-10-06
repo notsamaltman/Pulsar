@@ -18,6 +18,47 @@ class GroqQuotaExhaustedError(Exception):
         self.message = message
         super().__init__(self.message)
 
+def looks_like_groq_limit(err: Any) -> bool:
+    """True when an exception or message indicates Groq 429 / quota exhaustion."""
+    if isinstance(err, GroqQuotaExhaustedError):
+        return True
+    err_str = str(err).lower() if err is not None else ""
+    if not err_str:
+        return False
+    # YouTube Data API quota errors are not Groq
+    if "quotaexceeded" in err_str.replace(" ", "") and "groq" not in err_str:
+        return False
+    if "429" in err_str or "rate limit" in err_str:
+        return True
+    if "quota" in err_str and "groq" in err_str:
+        return True
+    return "groq" in err_str and ("limit" in err_str or "exhausted" in err_str)
+
+def parse_groq_retry_after_seconds(err_str: str, default: int = 900) -> int:
+    """Parse 'try again in 15m' style hints from Groq error strings."""
+    match = re.search(r"try again in (\d+)([smh])", (err_str or "").lower())
+    if not match:
+        return default
+    val = int(match.group(1))
+    unit = match.group(2)
+    if unit == "s":
+        return val
+    if unit == "m":
+        return val * 60
+    if unit == "h":
+        return val * 3600
+    return default
+
+def raise_groq_quota_from_error(err: Any) -> None:
+    """Record Redis rate-limit status and raise GroqQuotaExhaustedError."""
+    err_str = str(err)
+    retry_sec = parse_groq_retry_after_seconds(err_str)
+    set_groq_rate_limited(retry_after_seconds=retry_sec, message=f"Groq API rate limit reached: {err_str}")
+    raise GroqQuotaExhaustedError(
+        reset_at=time.time() + retry_sec,
+        message=f"Groq API rate limit reached. Resets in ~{retry_sec // 60} mins."
+    )
+
 def get_redis_client():
     url = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
     if url:
@@ -63,6 +104,34 @@ def set_groq_rate_limited(retry_after_seconds: int = 900, message: str = "Groq A
     except Exception as e:
         print(f"[!] Error setting Groq status in Redis: {e}")
 
+def clear_groq_status_if_reset() -> bool:
+    """Idle check: clear Redis Groq block once resetAt has passed.
+
+    Returns True if Groq is still rate-limited (system should stay idle).
+    """
+    try:
+        r = get_redis_client()
+        data = r.get("groq:status_info")
+        if not data:
+            return False
+        info = json.loads(data)
+        status = info.get("status")
+        if status not in ("TEMPORARILY_RATE_LIMITED", "DAILY_QUOTA_EXHAUSTED", "UNAVAILABLE"):
+            return False
+        reset_at_ms = info.get("resetAt")
+        now_ms = time.time() * 1000
+        if reset_at_ms and now_ms < reset_at_ms:
+            remaining = int((reset_at_ms - now_ms) / 1000)
+            print(f"[groq-idle] Groq still limited. Idle check in ~{remaining}s.")
+            return True
+        available = {"status": "AVAILABLE", "resetAt": None, "message": "Groq idle check passed — API available."}
+        r.set("groq:status_info", json.dumps(available))
+        print("[groq-idle] Groq window elapsed. Marked AVAILABLE.")
+        return False
+    except Exception as e:
+        print(f"[!] Error during Groq idle check: {e}")
+        return False
+
 def get_groq_llm(model_name: Optional[str] = None, temperature: float = 0.1) -> ChatGroq:
     """
     Returns a ChatGroq LLM instance using the global model configuration (or specified model_name).
@@ -99,23 +168,8 @@ def invoke_groq_json(prompt: str, model_name: Optional[str] = None, temperature:
             err_str = str(e)
             print(f"[-] Groq LLM JSON attempt {attempt+1}/{retries} failed: {err_str}")
             
-            # Intercept 429 / Rate limit errors
-            if "429" in err_str or "rate limit" in err_str.lower() or "quota" in err_str.lower():
-                # Try parsing retry-after from error string if present (e.g. "try again in 15m", "try again in 300s")
-                match = re.search(r"try again in (\d+)([smh])", err_str.lower())
-                retry_sec = 900 # default 15 mins
-                if match:
-                    val = int(match.group(1))
-                    unit = match.group(2)
-                    if unit == 's': retry_sec = val
-                    elif unit == 'm': retry_sec = val * 60
-                    elif unit == 'h': retry_sec = val * 3600
-                
-                set_groq_rate_limited(retry_after_seconds=retry_sec, message=f"Groq API rate limit reached: {err_str}")
-                raise GroqQuotaExhaustedError(
-                    reset_at=time.time() + retry_sec,
-                    message=f"Groq API rate limit reached. Resets in ~{retry_sec//60} mins."
-                )
+            if looks_like_groq_limit(e):
+                raise_groq_quota_from_error(e)
             
             time.sleep(1.0)
     return None
