@@ -1,7 +1,7 @@
 generator client {
   provider   = "prisma-client-py"
-  interface  = "asyncio"
   engineType = "binary"
+  interface  = "asyncio"
 }
 
 datasource db {
@@ -19,6 +19,7 @@ model User {
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
   firstSuccessfulJobAt DateTime?  @db.Timestamp(6)
+  tier                 String     @default("free")
   accounts             Account[]
   campaigns            Campaign[]
   sessions             Session[]
@@ -100,6 +101,8 @@ model Campaign {
   userId        String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  status        String         @default("queue")
+  platforms     String[]
   campaignLeads CampaignLead[]
   company       Company?       @relation(fields: [companyId], references: [id], onDelete: Cascade)
   user          User?          @relation(fields: [userId], references: [id], onDelete: Cascade)

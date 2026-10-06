@@ -29,50 +29,59 @@ export async function POST(req: NextRequest) {
       channels,
       tone,
       sequence,
-      companyId 
+      companyId,
+      platforms
     } = body;
 
+    const selectedPlatforms = Array.isArray(platforms) && platforms.length > 0
+      ? platforms
+      : (Array.isArray(channels) && channels.length > 0 ? channels : ["youtube", "instagram", "producthunt"]);
+
     // Basic validation matching the required fields in frontend
-    if (!campaignName || !industry || !geoTarget || !targetProfile || !channels || channels.length === 0) {
+    if (!campaignName || !industry || !geoTarget || !targetProfile) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
       );
     }
 
-    // --- 1. FREE-TIER DAILY LIMIT CHECK ---
+    // --- 1. TIER-BASED EXECUTION & DAILY LIMIT CHECK ---
     let priority = 5; // Default normal priority
     if (userId) {
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { firstSuccessfulJobAt: true }
+        select: { email: true, tier: true, firstSuccessfulJobAt: true }
       });
 
-      // Priority 1 (High) for user's first successful job, Priority 5 (Normal) for subsequent
-      if (!user?.firstSuccessfulJobAt) {
+      const isEliteTier = user?.tier === "elite" || user?.email === "panwalkarsoham@gmail.com";
+
+      // Priority 1 (High) for Elite users or user's first successful job
+      if (isEliteTier || !user?.firstSuccessfulJobAt) {
         priority = 1;
       }
 
-      // Check if user has already completed a successful job today (UTC)
-      const startOfToday = new Date();
-      startOfToday.setUTCHours(0, 0, 0, 0);
+      // If NOT Elite tier, enforce 1 job per day free limit
+      if (!isEliteTier) {
+        const startOfToday = new Date();
+        startOfToday.setUTCHours(0, 0, 0, 0);
 
-      const completedToday = await prisma.campaign.findFirst({
-        where: {
-          userId,
-          createdAt: { gte: startOfToday },
-          campaignLeads: { some: {} }
+        const completedToday = await prisma.campaign.findFirst({
+          where: {
+            userId,
+            createdAt: { gte: startOfToday },
+            campaignLeads: { some: {} }
+          }
+        });
+
+        if (completedToday) {
+          return NextResponse.json(
+            {
+              error: "DAILY_LIMIT_REACHED",
+              message: "Daily free-tier limit reached — you've already used today's free run. Upgrade to Elite Tier for infinite runs!"
+            },
+            { status: 429 }
+          );
         }
-      });
-
-      if (completedToday) {
-        return NextResponse.json(
-          {
-            error: "DAILY_LIMIT_REACHED",
-            message: "Daily free-tier limit reached — you've already used today's free run. Try again tomorrow!"
-          },
-          { status: 429 }
-        );
       }
 
       // Prevent simultaneous double-enqueue race condition
@@ -112,9 +121,11 @@ export async function POST(req: NextRequest) {
           sequence: sequence || "3 Touchpoints",
           companyId: companyId || null,
           userId: userId || null,
+          status: "queue",
+          platforms: selectedPlatforms,
         },
       });
-      console.log(`[+] Saved Campaign '${campaignName}' (${jobId}) to Prisma database.`);
+      console.log(`[+] Saved Campaign '${campaignName}' (${jobId}) to Prisma database with status 'queue'.`);
     } catch (dbErr) {
       console.error("[-] Error saving Campaign to Prisma database:", dbErr);
     }
@@ -125,6 +136,7 @@ export async function POST(req: NextRequest) {
       priority,
       jobBody: {
         ...body,
+        platforms: selectedPlatforms,
         campaignId: jobId,
         userId,
       },

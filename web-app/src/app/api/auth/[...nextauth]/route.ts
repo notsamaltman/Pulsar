@@ -88,10 +88,29 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         
         // Sync image if it's still from Google OR if it's missing but available from the login
-        // user.image here comes from the DB (via Adapter) or the provider profile
         const updatedImage = await syncProfileImage(user.id, user.image);
         token.image = updatedImage;
       }
+
+      // Always fetch latest tier from DB or check admin email
+      if (token.id) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { email: true, tier: true }
+        });
+        if (dbUser) {
+          if (dbUser.email === "panwalkarsoham@gmail.com" && dbUser.tier !== "elite") {
+            await prisma.user.update({
+              where: { id: token.id as string },
+              data: { tier: "elite" }
+            });
+            token.tier = "elite";
+          } else {
+            token.tier = dbUser.tier || "free";
+          }
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
@@ -100,12 +119,15 @@ export const authOptions: NextAuthOptions = {
         refreshToken?: string;
         id?: string;
         image?: string;
+        tier?: string;
       };
       
       if (session.user) {
         // @ts-expect-error - Session user type doesn't have id
         session.user.id = customToken.id;
         session.user.image = customToken.image || session.user.image;
+        // @ts-expect-error - Session user type doesn't have tier
+        session.user.tier = customToken.email === "panwalkarsoham@gmail.com" ? "elite" : (customToken.tier || "free");
       }
 
       // @ts-expect-error - Session type doesn't have these properties

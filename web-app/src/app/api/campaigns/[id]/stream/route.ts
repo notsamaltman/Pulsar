@@ -66,10 +66,13 @@ export async function GET(
             ...cl.lead
           })) || [];
 
+          const campObj = campaign as any;
           sendEvent({
             campaignId: id,
             jobState,
             jobProgress,
+            status: campObj?.status || (jobState === "active" ? "ongoing" : jobState === "completed" ? "complete" : "queue"),
+            platforms: campObj?.platforms || [],
             leadsCount: leads.length,
             leads,
             timestamp: Date.now()

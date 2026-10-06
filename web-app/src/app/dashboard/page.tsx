@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { 
+import {
   LayoutGrid,
   Monitor,
   MoreHorizontal,
@@ -12,9 +12,10 @@ import {
   Filter,
   ArrowUpDown,
   AlertTriangle,
-  Loader2
+  Loader2,
+  Sparkles
 } from "lucide-react";
-import { CreateCompanyModal, AnimatedButton } from "@/components";
+import { CreateCompanyModal, AnimatedButton, ContactAdminModal } from "@/components";
 import { LogoutButton } from "@/components/LogoutButton";
 import { CompanyCard } from "@/components/CompanyCard";
 import type { Company } from "@/generated/prisma/client";
@@ -24,13 +25,16 @@ export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isContactModalOpen, setIsContactModalOpen] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  
+
   // Delete state
   const [companyToDelete, setCompanyToDelete] = useState<Company | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const isElite = (session?.user as { tier?: string })?.tier === "elite" || session?.user?.email === "panwalkarsoham@gmail.com";
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -99,7 +103,7 @@ export default function DashboardPage() {
 
         {/* Sidebar Nav */}
         <div className="flex-1 overflow-y-auto px-2 space-y-0.5">
-          <button 
+          <button
             className="w-full flex items-center gap-3 px-3 py-1.5 rounded-md transition-colors text-[13px] bg-[#171717] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]"
           >
             <LayoutGrid className="w-4 h-4 text-[#BC66FF]" />
@@ -129,14 +133,14 @@ export default function DashboardPage() {
       <AnimatePresence>
         {mobileSidebarOpen && (
           <div className="fixed inset-0 z-50 md:hidden flex">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setMobileSidebarOpen(false)} 
+              onClick={() => setMobileSidebarOpen(false)}
               className="fixed inset-0 bg-black/80 backdrop-blur-sm"
             />
-            <motion.aside 
+            <motion.aside
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
@@ -150,7 +154,7 @@ export default function DashboardPage() {
                   </div>
                   <span className="text-sm font-bold tracking-widest uppercase">Pulsar</span>
                 </div>
-                <button 
+                <button
                   onClick={() => setMobileSidebarOpen(false)}
                   className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white"
                 >
@@ -159,7 +163,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="flex-1 space-y-2">
-                <button 
+                <button
                   onClick={() => setMobileSidebarOpen(false)}
                   className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm bg-[#171717] text-white font-semibold"
                 >
@@ -192,7 +196,7 @@ export default function DashboardPage() {
         <div className="border-b border-[#222222] sticky top-0 bg-[#121212]/90 backdrop-blur-md z-20">
           <div className="px-4 sm:px-8 h-14 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <button 
+              <button
                 onClick={() => setMobileSidebarOpen(true)}
                 className="md:hidden p-1.5 rounded-md bg-[#1A1A1A] text-slate-300 hover:text-white border border-[#2A2A2A]"
                 aria-label="Open sidebar"
@@ -203,42 +207,63 @@ export default function DashboardPage() {
               <span className="text-[#2A2A2A]">/</span>
               <span className="text-white text-[10px] font-bold uppercase tracking-wider">Companies</span>
             </div>
-            <div className="flex items-center gap-4 sm:gap-6">
-               <LogoutButton />
+            <div className="flex items-center gap-3 sm:gap-4">
+              {isElite ? (
+                <div className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full bg-[#BC66FF]/15 border border-[#BC66FF]/40 text-[#BC66FF] text-[10px] sm:text-[11px] font-bold shadow-[0_0_15px_rgba(188,102,255,0.15)]">
+                  <Sparkles className="w-3.5 h-3.5 text-[#BC66FF]" />
+                  <span className="sm:hidden">ELITE</span>
+                  <span className="hidden sm:inline">TIER</span>
+                  <span className="hidden sm:inline text-white/60 font-medium">• Unlimited Jobs</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-slate-300 text-[11px] font-medium">
+                    <span>FREE TIER</span>
+                    <span className="hidden sm:inline text-slate-500">• 1 Job/Day</span>
+                  </div>
+                  <button
+                    onClick={() => setIsContactModalOpen(true)}
+                    className="px-2.5 py-1 rounded-full bg-[#BC66FF]/20 border border-[#BC66FF]/40 text-[#BC66FF] hover:bg-[#BC66FF] hover:text-black text-[11px] font-bold transition"
+                  >
+                    Upgrade
+                  </button>
+                </div>
+              )}
+              <LogoutButton />
             </div>
           </div>
         </div>
 
         {/* Action Bar */}
         <div className="px-4 sm:px-8 py-4 sm:py-6 border-b border-[#1A1A1A]">
-           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:max-w-md">
-                <div className="relative w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#444444]" />
-                  <input 
-                    placeholder="Search for a company" 
-                    className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-md pl-9 pr-4 py-2 text-xs text-white focus:outline-none focus:border-[#3A3A3A] transition-colors"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <button className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#666666] hover:text-white transition-colors uppercase tracking-widest">
-                    <Filter className="w-2.5 h-2.5" />
-                    Status
-                  </button>
-                  <button className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#666666] hover:text-white transition-colors uppercase tracking-widest shrink-0">
-                    <ArrowUpDown className="w-2.5 h-2.5" />
-                    Name
-                  </button>
-                </div>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:max-w-md">
+              <div className="relative w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#444444]" />
+                <input
+                  placeholder="Search for a company"
+                  className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-md pl-9 pr-4 py-2 text-xs text-white focus:outline-none focus:border-[#3A3A3A] transition-colors"
+                />
               </div>
-              <button 
-                onClick={() => setIsModalOpen(true)}
-                className="flex items-center justify-center gap-2 bg-white text-black px-4 py-2.5 rounded-md text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all shadow-[0_0_20px_rgba(255,255,255,0.05)] w-full sm:w-auto"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                New Company
-              </button>
-           </div>
+              <div className="flex items-center gap-2">
+                <button className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#666666] hover:text-white transition-colors uppercase tracking-widest">
+                  <Filter className="w-2.5 h-2.5" />
+                  Status
+                </button>
+                <button className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 border border-[#222222] bg-[#1A1A1A]/50 rounded-md text-[10px] font-black text-[#666666] hover:text-white transition-colors uppercase tracking-widest shrink-0">
+                  <ArrowUpDown className="w-2.5 h-2.5" />
+                  Name
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center justify-center gap-2 bg-white text-black px-4 py-2.5 rounded-md text-[10px] font-black uppercase tracking-widest hover:bg-[#dddddd] transition-all shadow-[0_0_20px_rgba(255,255,255,0.05)] w-full sm:w-auto"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Company
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -248,12 +273,39 @@ export default function DashboardPage() {
               <div className="w-6 h-6 border-2 border-[#BC66FF]/30 border-t-[#BC66FF] rounded-full animate-spin" />
             </div>
           ) : companies.length > 0 ? (
-            <div className="px-8 py-8">
+            <div className="px-4 sm:px-8 py-6 space-y-6">
+              {/* Tier Status Card — only shown to Free users */}
+              {!isElite && (
+                <div className="p-4 rounded-2xl bg-[#161618] border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-white/5 text-slate-300 border border-white/10 shrink-0">
+                      <Sparkles className="w-5 h-5 text-slate-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-white tracking-wide">Free Tier Account</h4>
+                        <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-white/10 text-slate-300 rounded-md">
+                          1 Job / Day
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Free plan includes 1 company creation and 1 master-agent run per day.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsContactModalOpen(true)}
+                    className="px-4 py-2 rounded-xl bg-[#BC66FF] text-black hover:bg-white text-xs font-bold transition shadow-[0_0_15px_rgba(188,102,255,0.2)] shrink-0"
+                  >
+                    Upgrade to Elite
+                  </button>
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {companies.map((company) => (
-                  <CompanyCard 
-                    key={company.id} 
-                    company={company} 
+                  <CompanyCard
+                    key={company.id}
+                    company={company}
                     onDelete={(e) => {
                       e.stopPropagation();
                       setCompanyToDelete(company);
@@ -272,7 +324,7 @@ export default function DashboardPage() {
               <p className="text-[13px] text-[#666666] max-w-[320px] mb-8 leading-relaxed">
                 Connect your organization to the Pulsar engine to begin autonomous sales acceleration.
               </p>
-              <AnimatedButton 
+              <AnimatedButton
                 onClick={() => setIsModalOpen(true)}
                 className="h-10 px-8 rounded-md text-sm font-medium bg-white text-black hover:bg-[#e0e0e0] border-0"
               >
@@ -282,12 +334,17 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <CreateCompanyModal 
-          isOpen={isModalOpen} 
+        <CreateCompanyModal
+          isOpen={isModalOpen}
           onClose={() => {
             setIsModalOpen(false);
             fetchCompanies();
-          }} 
+          }}
+        />
+
+        <ContactAdminModal
+          isOpen={isContactModalOpen}
+          onClose={() => setIsContactModalOpen(false)}
         />
 
         {/* Delete Confirmation Modal */}
@@ -316,7 +373,7 @@ export default function DashboardPage() {
                     <p className="text-[12px] text-[#666666]">This action cannot be undone.</p>
                   </div>
                 </div>
-                
+
                 <p className="text-[13px] text-[#888888] leading-relaxed">
                   Are you sure you want to delete <span className="text-white font-bold">{companyToDelete.name}</span>? All associated campaigns and lead data will be permanently removed.
                 </p>

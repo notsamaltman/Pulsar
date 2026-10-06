@@ -11,6 +11,7 @@ import os
 import sys
 import json
 import asyncio
+import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
@@ -186,30 +187,146 @@ async def _push_to_result_queue(queue_name: str, results: Dict[str, Any], redis_
 # ============================================================
 
 def _run_instagram(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Runs the Instagram agent synchronously in its own thread."""
-    print("[MasterAgent] → Starting Instagram agent...")
+    """Runs the Instagram agent in a completely isolated subprocess.
+
+    Why a subprocess and not a thread?
+    -----------------------------------
+    LangGraph's sync ``graph.invoke()`` internally wraps its async
+    implementation with ``asyncio.run()``, which starts a NEW event loop
+    inside the calling thread.  Playwright's sync API checks
+    ``asyncio._get_running_loop()`` and raises an error if ANY event loop
+    is running in the current OS thread — including those created by
+    LangGraph.  Neither ``asyncio.set_event_loop(None)`` nor spawning a
+    plain ``threading.Thread`` prevents this, because LangGraph recreates
+    its own loop inside ``graph.invoke()``.
+
+    A subprocess is a completely fresh Python process: no asyncio loop,
+    no inherited thread-locals — Playwright works without any patching.
+
+    Communication: payload → subprocess stdin (JSON)
+                   result  ← subprocess stdout (JSON)
+    """
+    import subprocess
+    import json as _json
+
+    print("[MasterAgent] → Starting Instagram agent (subprocess)...")
+
+    runner_path = os.path.join(os.path.dirname(__file__), "instagram", "_runner.py")
+    payload_json = _json.dumps(payload)
+    timeout_s = 600
+
+    def _kill_tree(proc: "subprocess.Popen") -> None:
+        if proc.poll() is not None:
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+            else:
+                proc.kill()
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def _parse_result(stdout: str) -> Dict[str, Any]:
+        stdout = (stdout or "").strip()
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                return _json.loads(line)
+        return _json.loads(stdout)
+
+    proc = None
+    stderr_tail: List[str] = []
     try:
-        from agents.instagram.instagram_agent import create_instagram_graph, cleanup_browser_resources
-        graph = create_instagram_graph()
-        final_state = graph.invoke(payload)
-        leads = final_state.get("staged_leads", [])
-        print(f"[MasterAgent] ← Instagram agent finished with {len(leads)} leads")
+        proc = subprocess.Popen(
+            [sys.executable, "-u", runner_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+        proc.stdin.write(payload_json)
+        proc.stdin.close()
+
+        stdout_chunks: List[str] = []
+
+        def _pump_stderr() -> None:
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                stderr_tail.append(line.rstrip())
+                if len(stderr_tail) > 200:
+                    del stderr_tail[: len(stderr_tail) - 200]
+                print(f"  [instagram-subprocess] {line.rstrip()}", flush=True)
+
+        def _pump_stdout() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                stdout_chunks.append(line)
+
+        err_thread = threading.Thread(target=_pump_stderr, name="ig-stderr", daemon=True)
+        out_thread = threading.Thread(target=_pump_stdout, name="ig-stdout", daemon=True)
+        err_thread.start()
+        out_thread.start()
+
+        try:
+            proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            print("[MasterAgent] ✗ Instagram subprocess timed out after 10 minutes", flush=True)
+            _kill_tree(proc)
+            err_thread.join(timeout=2)
+            if stderr_tail:
+                print("[MasterAgent] Last Instagram logs before timeout:", flush=True)
+                for line in stderr_tail[-40:]:
+                    print(f"  [instagram-subprocess] {line}", flush=True)
+            return {
+                "platform": "instagram",
+                "leads": [],
+                "lead_count": 0,
+                "error": "subprocess timeout (600 s)",
+            }
+
+        err_thread.join(timeout=5)
+        out_thread.join(timeout=5)
+        stdout = "".join(stdout_chunks)
+
+        if proc.returncode != 0:
+            err_snippet = "\n".join(stderr_tail[-20:]) or "no stderr"
+            print(f"[MasterAgent] ✗ Instagram subprocess exited {proc.returncode}")
+            return {
+                "platform": "instagram",
+                "leads": [],
+                "lead_count": 0,
+                "error": f"subprocess exit {proc.returncode}: {err_snippet[-500:]}",
+            }
+
+        result = _parse_result(stdout)
+        lead_count = result.get("lead_count", 0)
+        print(f"[MasterAgent] ← Instagram agent finished with {lead_count} leads")
+        return result
+
+    except _json.JSONDecodeError as e:
+        print(f"[MasterAgent] ✗ Instagram subprocess returned invalid JSON: {e}")
         return {
             "platform": "instagram",
-            "leads": leads,
-            "lead_count": len(leads),
-            "error": final_state.get("error"),
+            "leads": [],
+            "lead_count": 0,
+            "error": f"invalid JSON from subprocess: {e}",
         }
     except Exception as e:
         print(f"[MasterAgent] ✗ Instagram agent error: {e}")
         traceback.print_exc()
+        if proc is not None:
+            _kill_tree(proc)
         return {"platform": "instagram", "leads": [], "lead_count": 0, "error": str(e)}
-    finally:
-        try:
-            from agents.instagram.instagram_agent import cleanup_browser_resources
-            cleanup_browser_resources()
-        except Exception as ce:
-            print(f"[!] Warning cleaning up browser resources: {ce}")
 
 
 
@@ -278,13 +395,7 @@ class MasterAgent:
 
     def __init__(self, job: bullmq.Job):
         self.job = job
-        url = os.getenv("UPSTASH_REDIS_URL") or os.getenv("REDIS_URL")
-        if not url:
-            rest_url = os.getenv("UPSTASH_REDIS_REST_URL")
-            rest_token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
-            if rest_url:
-                host = rest_url.replace("https://", "").replace("http://", "").strip("/")
-                url = f"rediss://default:{rest_token}@{host}:6379" if rest_token else f"rediss://{host}:6379"
+        url = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
         self.redis_url = url or "redis://localhost:6379"
 
     async def run(self):
@@ -306,13 +417,35 @@ class MasterAgent:
         })
 
         # ----- Build payloads for each platform -----
+        selected_platforms = icp.get("platforms") or icp.get("channels") or []
+        if isinstance(selected_platforms, str):
+            selected_platforms = [selected_platforms]
+        
+        # Normalize selected platforms list (e.g. ['youtube', 'instagram'])
+        normalized_selected = []
+        for p in selected_platforms:
+            p_str = str(p).lower().strip()
+            if "youtube" in p_str or "yt" in p_str:
+                normalized_selected.append("youtube")
+            elif "instagram" in p_str or "ig" in p_str:
+                normalized_selected.append("instagram")
+            elif "producthunt" in p_str or "product hunt" in p_str or "ph" in p_str:
+                normalized_selected.append("producthunt")
+
+        # Fallback to all platforms if none matched or empty
+        if not normalized_selected:
+            normalized_selected = ["youtube", "instagram", "producthunt"]
+
+        print(f"[MasterAgent] Selected platforms to run: {normalized_selected}")
+
         payloads = {}
         for platform, (runner, builder, queue_name) in self.PLATFORM_RUNNERS.items():
-            payloads[platform] = {
-                "payload": builder(icp, campaign_id),
-                "runner": runner,
-                "queue_name": queue_name,
-            }
+            if platform in normalized_selected:
+                payloads[platform] = {
+                    "payload": builder(icp, campaign_id),
+                    "runner": runner,
+                    "queue_name": queue_name,
+                }
 
         # ----- Fan-out: run all sub-agents concurrently -----
         all_results: Dict[str, Dict[str, Any]] = {}
@@ -410,6 +543,7 @@ class MasterAgent:
             "channels": job_data.get("channels", []),
             "tone": job_data.get("tone", ""),
             "sequence": job_data.get("sequence", ""),
+            "platforms": job_data.get("platforms") or job_data.get("channels", []),
             "companyId": job_data.get("companyId"),
             "userId": job_data.get("userId"),
             "target_lead_count": 10,

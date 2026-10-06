@@ -2,6 +2,9 @@ import random
 import time
 import json
 import os
+import asyncio
+import functools
+import queue as _queue
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -9,8 +12,6 @@ from deepagents import create_deep_agent
 from typing import Dict, Any, List, Optional, Set
 import sys
 import threading
-import json
-import os
 from pydantic import BaseModel, Field
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
@@ -35,6 +36,114 @@ _thread_local = threading.local()
 _main_thread_id = None
 BROWSER_LOCK = threading.Lock()
 
+
+# ---------------------------------------------------------------------------
+# Playwright Worker Thread
+# ---------------------------------------------------------------------------
+# LangGraph's sync graph.invoke() internally calls asyncio.run(), which starts
+# a new event loop in the calling thread.  Playwright's sync API checks
+# asyncio._get_running_loop() and raises if any loop is running.
+# The only robust fix (without rewriting to async playwright) is to run ALL
+# playwright operations in a dedicated thread that never touches asyncio.
+
+class _PlaywrightWorker:
+    """
+    Singleton worker that executes every Playwright call in a dedicated
+    daemon thread.  The thread is created once and has no asyncio event loop,
+    so sync_playwright() starts cleanly regardless of the calling context.
+
+    Usage:
+        result = _pw_worker.run(some_callable, *args, **kwargs)
+    """
+    _instance: Optional['_PlaywrightWorker'] = None
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self._queue: _queue.Queue = _queue.Queue()
+        self._thread = threading.Thread(
+            target=self._loop,
+            daemon=True,
+            name="playwright-worker",
+        )
+        self._thread.start()
+
+    @classmethod
+    def get(cls) -> '_PlaywrightWorker':
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    def _loop(self):
+        """Worker loop — runs in a thread with no asyncio event loop."""
+        # Explicitly clear any inherited loop reference
+        asyncio.set_event_loop(None)
+        while True:
+            func, args, kwargs, reply = self._queue.get()
+            if func is None:   # sentinel → shut down
+                break
+            try:
+                reply.put(('ok', func(*args, **kwargs)))
+            except Exception as exc:
+                reply.put(('err', exc))
+
+    def run(self, func, *args, **kwargs):
+        """Run func(*args, **kwargs) in the playwright worker thread and return its result.
+
+        Re-entrant: nested calls already on the worker thread run inline so we
+        never deadlock behind the queue (e.g. launch_browser → is_logged_in).
+        """
+        if threading.current_thread() is self._thread:
+            return func(*args, **kwargs)
+        reply: _queue.Queue = _queue.Queue()
+        self._queue.put((func, args, kwargs, reply))
+        status, value = reply.get()
+        if status == 'err':
+            raise value
+        return value
+
+    def stop(self):
+        """Shut down the worker thread gracefully."""
+        self._queue.put((None, None, None, None))
+        self._thread.join(timeout=5)
+        _PlaywrightWorker._instance = None
+
+
+# Module-level singleton — imported by cleanup_browser_resources too
+_pw_worker: Optional[_PlaywrightWorker] = None
+
+def _get_pw_worker() -> _PlaywrightWorker:
+    global _pw_worker
+    if _pw_worker is None:
+        _pw_worker = _PlaywrightWorker.get()
+    return _pw_worker
+
+
+def _on_pw_thread(func):
+    """Run a Playwright-touching function on the dedicated worker thread."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return _get_pw_worker().run(func, *args, **kwargs)
+    return wrapper
+
+
+def _bind_handles(pw=None, browser=None, ctx=None, p=None):
+    """Store Playwright handles on the worker thread and in module globals."""
+    global page, browser_context, playwright_instance
+    if pw is not None:
+        _thread_local.playwright = pw
+        playwright_instance = pw
+    if browser is not None:
+        _thread_local.browser = browser
+    if ctx is not None:
+        _thread_local.context = ctx
+        browser_context = ctx
+    if p is not None:
+        _thread_local.page = p
+        page = p
+
+
 # --- LangGraph State Definition ---
 class InstagramAgentState(TypedDict):
     campaign_id: Optional[str] # Campaign UUID for Supabase linkage
@@ -54,64 +163,89 @@ class InstagramAgentState(TypedDict):
 
 
 def _get_page():
-    """Returns an isolated, production-safe Playwright page instance without relying on local Chrome profile or CDP."""
+    """Return the live Playwright page, creating it once on the worker thread.
+
+    Playwright's Sync API owns an event loop in the worker thread after the
+    first sync_playwright().start(). Starting a second instance on that same
+    thread raises "Sync API inside the asyncio loop". Reuse the existing page
+    whenever it is still alive. All page method calls must also run on this
+    worker (see _on_pw_thread); the returned object is not safe on other threads.
+    """
     global page, browser_context, playwright_instance
-    
-    # Check thread-local storage first
-    if hasattr(_thread_local, "page") and _thread_local.page:
+
+    def _ensure():
+        global page, browser_context, playwright_instance
+        existing = getattr(_thread_local, "page", None) or page
+        if existing is not None:
+            try:
+                _ = existing.url
+                _bind_handles(p=existing)
+                return existing
+            except Exception:
+                _thread_local.page = None
+                page = None
+
         try:
-            _thread_local.page.url
-            return _thread_local.page
-        except Exception:
-            _thread_local.page = None
+            from playwright.sync_api import sync_playwright
+            pw = sync_playwright().start()
+            headless_env = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
+            browser = pw.chromium.launch(
+                headless=headless_env,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 800}
+            )
+            p = ctx.new_page()
+            _bind_handles(pw=pw, browser=browser, ctx=ctx, p=p)
+            return p
+        except Exception as e:
+            print(f"[-] Error initializing isolated Playwright browser: {e}")
+            raise
 
-    try:
-        from playwright.sync_api import sync_playwright
-        if not hasattr(_thread_local, "playwright") or not _thread_local.playwright:
-            _thread_local.playwright = sync_playwright().start()
-
-        headless_env = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
-        browser = _thread_local.playwright.chromium.launch(
-            headless=headless_env,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
-        _thread_local.browser = browser
-        ctx = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800}
-        )
-        _thread_local.context = ctx
-        _thread_local.page = ctx.new_page()
-        return _thread_local.page
-    except Exception as e:
-        print(f"[-] Error initializing isolated Playwright browser: {e}")
-        raise e
+    return _get_pw_worker().run(_ensure)
 
 def _get_context():
-    """Returns a thread-safe browser context."""
-    global browser_context
-    if hasattr(_thread_local, "context") and _thread_local.context:
-        return _thread_local.context
-    _get_page()
-    return getattr(_thread_local, "context", browser_context)
+    """Returns the browser context from the playwright worker thread."""
+    def _ensure_ctx():
+        existing = getattr(_thread_local, "context", None) or browser_context
+        if existing is not None:
+            return existing
+        _get_page()
+        return getattr(_thread_local, "context", None) or browser_context
+
+    return _get_pw_worker().run(_ensure_ctx)
 
 def cleanup_browser_resources():
-    """Safely closes Playwright pages, context, and browser for thread-local or global instances."""
-    try:
-        if hasattr(_thread_local, "page") and _thread_local.page:
-            _thread_local.page.close()
+    """Safely closes Playwright pages, context, and browser."""
+    def _cleanup():
+        global page, browser_context, playwright_instance
+        try:
+            if getattr(_thread_local, "page", None):
+                _thread_local.page.close()
+            if getattr(_thread_local, "context", None):
+                _thread_local.context.close()
+            if getattr(_thread_local, "browser", None):
+                _thread_local.browser.close()
+            if getattr(_thread_local, "playwright", None):
+                _thread_local.playwright.stop()
+        except Exception as e:
+            print(f"[!] Warning during browser cleanup: {e}")
+        finally:
             _thread_local.page = None
-        if hasattr(_thread_local, "context") and _thread_local.context:
-            _thread_local.context.close()
             _thread_local.context = None
-        if hasattr(_thread_local, "browser") and _thread_local.browser:
-            _thread_local.browser.close()
             _thread_local.browser = None
-        if hasattr(_thread_local, "playwright") and _thread_local.playwright:
-            _thread_local.playwright.stop()
             _thread_local.playwright = None
+            page = None
+            browser_context = None
+            playwright_instance = None
+
+    try:
+        _get_pw_worker().run(_cleanup)
     except Exception as e:
-        print(f"[!] Warning during browser cleanup: {e}")
+        print(f"[!] Warning during browser cleanup dispatch: {e}")
+
 
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -343,6 +477,7 @@ def handle_response(response):
             # print(f"Error in handle_response: {e}")
             pass
 
+@_on_pw_thread
 def human_type(selector, text):
     """Types text like a human with random delays between keystrokes."""
     page = _get_page()
@@ -352,6 +487,7 @@ def human_type(selector, text):
         if random.random() > 0.9:
             time.sleep(random.uniform(0.1, 0.3))
 
+@_on_pw_thread
 def save_session(username):
     """Saves the current browser state (cookies, local storage) and metadata."""
     context = _get_context()
@@ -372,6 +508,7 @@ def load_session():
             return json.load(f)
     return None
 
+@_on_pw_thread
 def is_logged_in():
     """Checks if the user is currently logged in by looking for common home elements or interstitials."""
     page = _get_page()
@@ -399,6 +536,7 @@ def is_logged_in():
     except:
         return False
 
+@_on_pw_thread
 def detect_challenge():
     """
     Checks the page for common Instagram challenges, reCAPTCHA, 
@@ -425,6 +563,7 @@ def detect_challenge():
             continue
     return False
 
+@_on_pw_thread
 def detect_login_errors():
     """
     Checks the page for login-specific errors like incorrect password
@@ -448,6 +587,7 @@ def detect_login_errors():
             continue
     return False
 
+@_on_pw_thread
 def handle_email_verification(context):
     page = _get_page()
     print("Checking for email verification screen...")
@@ -466,6 +606,7 @@ def handle_email_verification(context):
     except Exception:
         print("[+] No verification screen found, proceeding.")
 
+@_on_pw_thread
 def handle_post_login_interstitials(context):
     """Handles and skips post-login interstitials like 'Save Info' and 'Notifications'."""
     page = _get_page()
@@ -492,6 +633,7 @@ def handle_post_login_interstitials(context):
         time.sleep(random.randint(2, 4))
         page.wait_for_load_state("networkidle")
 
+@_on_pw_thread
 def login_and_save(email, password):
     """Performs the full login flow and saves the session."""
     page = _get_page()
@@ -540,6 +682,7 @@ def login_and_save(email, password):
         return True
     return False
 
+@_on_pw_thread
 def search_hashtag(hashtag: str):
     """
     Searches for a hashtag on Instagram and extracts details of all loaded posts.
@@ -624,6 +767,7 @@ def search_hashtag(hashtag: str):
         print(f"[-] Error during hashtag search: {e}")
         return {"error": str(e), "hashtag": hashtag}
 
+@_on_pw_thread
 def search_profile(usernames: List[str]):
     """
     Navigates to the profile pages of the given usernames one by one 
@@ -699,65 +843,72 @@ def search_profile(usernames: List[str]):
             
     return results
 
+@_on_pw_thread
 def launch_browser():
     """
     Launches browser and automatically completes authentication + session saving
-    and navigates to instagram
+    and navigates to instagram.
+
+    Runs entirely on the playwright worker thread so sync_playwright() is
+    started only once. Nested helpers (is_logged_in, login_and_save) are
+    re-entrant on that same thread and reuse the live page.
     """
-    with BROWSER_LOCK:
-        global page, browser_context, playwright_instance, _main_thread_id
-        _main_thread_id = threading.get_ident() # Store current thread id
-        email = os.getenv("INSTAGRAM_EMAIL")
-        password = os.getenv("INSTAGRAM_PASSWORD")
+    global page, browser_context, playwright_instance, _main_thread_id
+    _main_thread_id = threading.get_ident()
+    email = os.getenv("INSTAGRAM_EMAIL")
+    password = os.getenv("INSTAGRAM_PASSWORD")
 
-        if not email or not password:
-            print("Error: INSTAGRAM_EMAIL and INSTAGRAM_PASSWORD env variables must be set.")
-            return
+    if not email or not password:
+        print("Error: INSTAGRAM_EMAIL and INSTAGRAM_PASSWORD env variables must be set.")
+        return
 
-        # Stop existing playwright instance if initialized from a dead thread
-        if playwright_instance is not None:
-            try:
-                playwright_instance.stop()
-            except Exception:
-                pass
-            playwright_instance = None
-
-        from playwright.sync_api import sync_playwright
+    if playwright_instance is not None:
         try:
-            playwright_instance = sync_playwright().start()
-            browser = playwright_instance.chromium.launch(
-                channel="chrome",
-                headless=False,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--remote-debugging-port=9222"],
-            )
-        except Exception as e:
-            print(f"[-] Initial playwright launch attempt failed ({e}). Retrying fresh instance...")
-            playwright_instance = sync_playwright().start()
-            browser = playwright_instance.chromium.launch(
-                channel="chrome",
-                headless=False,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--remote-debugging-port=9222"],
-            )
-    
+            playwright_instance.stop()
+        except Exception:
+            pass
+        playwright_instance = None
+        page = None
+        browser_context = None
+        _thread_local.page = None
+        _thread_local.context = None
+        _thread_local.browser = None
+        _thread_local.playwright = None
+
+    from playwright.sync_api import sync_playwright
+    pw = sync_playwright().start()
+    headless_env = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
+    try:
+        browser = pw.chromium.launch(
+            channel="chrome",
+            headless=headless_env,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--remote-debugging-port=9222"],
+        )
+    except Exception as e:
+        print(f"[-] Chrome channel launch failed ({e}). Falling back to bundled Chromium...")
+        browser = pw.chromium.launch(
+            headless=headless_env,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+        )
+
     session_data = load_session()
     storage_state = session_data.get("storage_state") if session_data else None
 
-    # Use new_context to correctly handle storage_state
-    browser_context = browser.new_context(
+    ctx = browser.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         storage_state=storage_state
     )
-    
-    page = browser_context.pages[0] if browser_context.pages else browser_context.new_page()
+    p = ctx.pages[0] if ctx.pages else ctx.new_page()
     try:
-        page.goto("https://www.instagram.com", wait_until="domcontentloaded", timeout=20000)
+        p.goto("https://www.instagram.com", wait_until="domcontentloaded", timeout=20000)
     except Exception as goto_err:
         print(f"[!] Warning: page.goto instagram home took longer than 20s ({goto_err}). Continuing...")
-    page.on("response", handle_response)
+    p.on("response", handle_response)
+    _bind_handles(pw=pw, browser=browser, ctx=ctx, p=p)
 
     print("Checking session validity...")
     if is_logged_in():
-        print(f"[+] Valid session found for {session_data.get('username')}. Reusing...")
+        print(f"[+] Valid session found for {session_data.get('username') if session_data else 'unknown'}. Reusing...")
     else:
         print("[!] Session expired or not found. Logging in...")
         if not login_and_save(email, password):
@@ -766,10 +917,10 @@ def launch_browser():
             print("[+] Login successful and session saved.")
 
     print("\n[+] Browser launch and authentication complete.")
+    inject_visual_effects(p)
 
-    # --- Inject Visual Effects and Lock ---
-    inject_visual_effects(page)
 
+@_on_pw_thread
 def inject_visual_effects(page):
     """Injects a lock overlay, glare effects, and a thinking indicator into the page."""
     css = """
@@ -1505,10 +1656,12 @@ def main():
 
     print("\n[+] Press Ctrl+C to close browser and exit.")
     try:
-        page = _get_page()
-        if page:
-            page.wait_for_event("close", timeout=0)
-    except:
+        def _wait_close():
+            p = _get_page()
+            if p:
+                p.wait_for_event("close", timeout=0)
+        _get_pw_worker().run(_wait_close)
+    except Exception:
         pass
 
 if __name__ == "__main__":

@@ -29,11 +29,27 @@ async def company_profile_builder(job:bullmq.Job, job_token:str):
 
 async def master_agent_handler(job:bullmq.Job, job_token:str):
     """Handles jobs from master-queue — fans out ICP to all sub-agents."""
-    print(f"[master-queue] Received job {job.id}")
+    job_data = job.data or {}
+    campaign_id = job_data.get("jobId") or job_data.get("campaignId") or job_data.get("campaign_id")
+    print(f"[master-queue] Received job {job.id} for campaign {campaign_id}")
+    
+    if campaign_id:
+        try:
+            from utils.lead_db import update_campaign_status
+            await update_campaign_status(campaign_id, "ongoing")
+        except Exception as st_err:
+            print(f"[!] Warning setting campaign {campaign_id} status to ongoing: {st_err}")
+
     try:
         agent = MasterAgent(job)
         await agent.run()
         print(f"[master-queue] Job {job.id} completed successfully")
+        if campaign_id:
+            try:
+                from utils.lead_db import update_campaign_status
+                await update_campaign_status(campaign_id, "complete")
+            except Exception as st_err:
+                print(f"[!] Warning setting campaign {campaign_id} status to complete: {st_err}")
     except Exception as e:
         err_str = str(e)
         if "Groq" in err_str or "rate limit" in err_str.lower() or "429" in err_str:
@@ -42,18 +58,17 @@ async def master_agent_handler(job:bullmq.Job, job_token:str):
         else:
             print(f"[master-queue] Error processing job {job.id}: {err_str}")
             await job.updateProgress({"status": "failed", "message": f"Error: {err_str}"})
+            if campaign_id:
+                try:
+                    from utils.lead_db import update_campaign_status
+                    await update_campaign_status(campaign_id, "complete")
+                except Exception as st_err:
+                    print(f"[!] Warning setting campaign {campaign_id} status to complete on error: {st_err}")
 
 def get_redis_url() -> str:
-    url = os.getenv("UPSTASH_REDIS_URL") or os.getenv("REDIS_URL")
+    url = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
     if url:
         return url
-    rest_url = os.getenv("UPSTASH_REDIS_REST_URL")
-    rest_token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
-    if rest_url:
-        host = rest_url.replace("https://", "").replace("http://", "").strip("/")
-        if rest_token:
-            return f"rediss://default:{rest_token}@{host}:6379"
-        return f"rediss://{host}:6379"
     return "redis://localhost:6379"
 
 async def heartbeat_poller(shutdown_event: asyncio.Event):
@@ -95,9 +110,29 @@ async def main():
     concurrency = int(os.getenv("PULSAR_WORKER_CONCURRENCY", "2"))
     print(f"[+] Initializing BullMQ workers with concurrency={concurrency}...")
 
-    company_profile_worker = Worker("company_build-queue", company_profile_builder, {"connection": redis_url, "concurrency": concurrency})
-    master_agent_worker = Worker("master-queue", master_agent_handler, {"connection": redis_url, "concurrency": concurrency})
-    print(f"[+] Workers active: company_build-queue, master-queue (concurrency={concurrency})")
+    company_profile_worker = Worker(
+        "company_build-queue",
+        company_profile_builder,
+        {"connection": redis_url, "concurrency": concurrency, "attempts": 3}
+    )
+    master_agent_worker = Worker(
+        "master-queue",
+        master_agent_handler,
+        {"connection": redis_url, "concurrency": concurrency, "attempts": 3}
+    )
+    print(f"[+] Workers active: company_build-queue, master-queue (concurrency={concurrency}, max_attempts=3)")
+
+
+    # Close Instagram browser when master-queue drains (no more pending/active jobs)
+    def _on_master_drained():
+        print("[+] master-queue drained — closing Instagram browser resources.")
+        try:
+            from agents.instagram.instagram_agent import cleanup_browser_resources
+            cleanup_browser_resources()
+        except Exception as e:
+            print(f"[!] Warning closing browser on idle: {e}")
+
+    master_agent_worker.on("drained", _on_master_drained)
 
     heartbeat_task = asyncio.create_task(heartbeat_poller(shutdown_event))
 

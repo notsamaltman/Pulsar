@@ -470,3 +470,28 @@ def mark_user_first_job_done_sync(user_id: str):
     with ThreadPoolExecutor(max_workers=1) as executor:
         return executor.submit(lambda: asyncio.run(mark_user_first_job_done(user_id))).result()
 
+async def update_campaign_status(campaign_id: str, status: str):
+    if not campaign_id:
+        return
+    try:
+        db = Prisma()
+        await db.connect()
+        query = """
+        UPDATE campaigns
+        SET status = $1, "updatedAt" = NOW()
+        WHERE id = $2;
+        """
+        await db.execute_raw(query, status, campaign_id)
+        await db.disconnect()
+        print(f"[+] Updated campaign '{campaign_id}' status to '{status}' in DB.")
+    except Exception as e:
+        print(f"[-] Error updating campaign '{campaign_id}' status to '{status}': {e}")
+
+def update_campaign_status_sync(campaign_id: str, status: str):
+    if not campaign_id:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(lambda: asyncio.run(update_campaign_status(campaign_id, status))).result()
+
+

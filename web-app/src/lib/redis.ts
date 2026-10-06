@@ -12,19 +12,7 @@ export function getRedisConnection(): IORedis {
     return redisConnectionInstance;
   }
 
-  let url = process.env.UPSTASH_REDIS_URL || process.env.REDIS_URL;
-
-  // If no direct redis:// or rediss:// URL is set, check if REST credentials can be converted
-  if (!url && process.env.UPSTASH_REDIS_REST_URL) {
-    const restUrl = process.env.UPSTASH_REDIS_REST_URL;
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN || '';
-    const host = restUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    if (token) {
-      url = `rediss://default:${token}@${host}:6379`;
-    } else {
-      url = `rediss://${host}:6379`;
-    }
-  }
+  const url = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL;
 
   const options: RedisOptions = {
     maxRetriesPerRequest: null,
@@ -33,7 +21,7 @@ export function getRedisConnection(): IORedis {
   };
 
   if (url) {
-    if (url.startsWith('rediss://') || url.includes('upstash.io')) {
+    if (url.startsWith('rediss://')) {
       options.tls = {
         rejectUnauthorized: false,
       };

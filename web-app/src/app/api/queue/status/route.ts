@@ -31,7 +31,10 @@ export async function GET(req: NextRequest) {
           const waitingJobs = await masterQueue.getWaiting();
           const index = waitingJobs.findIndex(j => j.id === job.id);
           queuePosition = index >= 0 ? index + 1 : 1;
-          estimatedEtaSeconds = queuePosition * 120;
+          // 5-10 mins per job in front of it (using 7 mins / 420s)
+          estimatedEtaSeconds = queuePosition * 420;
+        } else if (state === 'active') {
+          estimatedEtaSeconds = 300; // active job has ~5 mins remaining
         }
 
         jobDetail = {

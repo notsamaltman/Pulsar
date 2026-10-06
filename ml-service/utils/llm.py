@@ -19,7 +19,7 @@ class GroqQuotaExhaustedError(Exception):
         super().__init__(self.message)
 
 def get_redis_client():
-    url = os.getenv("UPSTASH_REDIS_URL") or os.getenv("REDIS_URL")
+    url = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
     if url:
         return redis.Redis.from_url(url, decode_responses=True)
     host = os.getenv("REDIS_HOST", "localhost")

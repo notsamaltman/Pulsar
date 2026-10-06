@@ -26,6 +26,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
     minEngagement: "",
     contentType: "",
     channels: [] as string[],
+    platforms: ["youtube", "instagram", "producthunt"] as string[],
     tone: "Professional / Formal",
     sequence: "3 Touchpoints (Standard)"
   });
@@ -110,7 +111,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 if (isOffline) {
                   setApiError({
                     title: "Backend Service Down",
-                    message: "Pulsar's backend execution engine is currently offline or unreachable. Please wait a moment or click Retry on the bottom-right badge."
+                    message: "The backend execution server is currently offline or unreachable. Please try again in a few moments."
                   });
                   return;
                 }
@@ -144,12 +145,13 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                       });
                     }
                   }
-                } catch (e) {
+                } catch {
                   setApiError({
                     title: "Network Error",
-                    message: "Unable to connect to Pulsar servers. Please check your internet connection."
+                    message: "Unable to connect to server. Please check your internet connection."
                   });
                 }
+
               }}
 
               stepCircleContainerClassName="!rounded-2xl"
@@ -334,7 +336,50 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 description="Define the execution logistics for engaging the audience."
               >
                 <div className="grid grid-cols-2 gap-6 pt-2">
-                  <div className="space-y-3 col-span-2">
+                    <div className="flex flex-col gap-2 col-span-2">
+                       <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Target Platforms (Restricts Agents &amp; UI Tabs) *</label>
+                       <div className="flex gap-4">
+                         {[
+                           { id: "youtube", label: "YouTube" },
+                           { id: "instagram", label: "Instagram" },
+                           { id: "producthunt", label: "ProductHunt" }
+                         ].map(plat => {
+                           const isSelected = (formData.platforms || ["youtube", "instagram", "producthunt"]).includes(plat.id);
+                           return (
+                             <label key={plat.id} className="flex-1 cursor-pointer">
+                               <input
+                                 type="checkbox"
+                                 className="peer hidden"
+                                 checked={isSelected}
+                                 onChange={() => {
+                                   const current = formData.platforms || ["youtube", "instagram", "producthunt"];
+                                   let next: string[];
+                                   if (isSelected) {
+                                     if (current.length === 1) return;
+                                     next = current.filter(p => p !== plat.id);
+                                   } else {
+                                     next = [...current, plat.id];
+                                   }
+                                   setFormData({ ...formData, platforms: next });
+                                 }}
+                               />
+                               <div className="w-full py-4 px-3 border border-[#2A2A2A] bg-[#1A1A1A] rounded-lg flex items-center justify-center gap-2.5 text-xs font-bold text-[#666] uppercase tracking-wider hover:border-[#444] peer-checked:border-[#BC66FF] peer-checked:text-[#BC66FF] peer-checked:bg-[#BC66FF]/10 transition-all">
+                                 <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all ${isSelected ? "bg-[#BC66FF] border-[#BC66FF]" : "border-[#444] bg-[#111]"}`}>
+                                   {isSelected && (
+                                     <svg className="w-2.5 h-2.5 text-black" viewBox="0 0 10 10" fill="none">
+                                       <path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                                     </svg>
+                                   )}
+                                 </span>
+                                 {plat.label}
+                               </div>
+                             </label>
+                           );
+                         })}
+                       </div>
+                    </div>
+
+                    <div className="space-y-3 col-span-2">
                     <div className="flex items-center justify-between">
                        <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Preferred Channels *</label>
                        {errors.channels && <span className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.channels}</span>}
