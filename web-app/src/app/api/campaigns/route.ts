@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import { getRedisConnection, getGroqStatus, isGroqExhausted, ensureRedisConnected, withTimeout } from "@/lib/redis";
+import { getPrisma } from "@/lib/prisma";
+import { createRedisClient, getGroqStatus, isGroqExhausted, withTimeout } from "@/lib/redis";
 
 export async function GET(req: NextRequest) {
+  const { prisma, pool } = getPrisma();
   try {
     const { searchParams } = new URL(req.url);
     const companyId = searchParams.get("companyId");
@@ -27,9 +28,9 @@ export async function GET(req: NextRequest) {
     let waitingJobs: any[] = [];
     let groqStatus: any = null;
 
+    const connection = createRedisClient();
     try {
-      const connection = getRedisConnection();
-      await ensureRedisConnected(connection);
+      await withTimeout(connection.connect(), 4000, "Redis connect");
       const masterQueue = new Queue("master-queue", { connection });
       waitingJobs = await withTimeout(masterQueue.getWaiting(), 4000, "BullMQ getWaiting");
       groqStatus = await getGroqStatus();
@@ -39,7 +40,12 @@ export async function GET(req: NextRequest) {
         // ignore
       }
     } catch (e) {
-      console.warn("Could not query master-queue for campaign ETAs:", e);
+      console.warn(
+        "Could not query master-queue for campaign ETAs:",
+        e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+      );
+    } finally {
+      connection.disconnect();
     }
 
     const isGroqExhaustedFlag = isGroqExhausted(groqStatus);
@@ -73,8 +79,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ success: true, campaigns: enrichedCampaigns });
   } catch (error: unknown) {
-    console.error("Error fetching campaigns:", error);
+    console.error(
+      "Error fetching campaigns:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
     const errorMessage = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: errorMessage }, { status: 500 });
+  } finally {
+    await pool.end();
   }
 }

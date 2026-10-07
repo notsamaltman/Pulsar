@@ -1,9 +1,10 @@
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   const start = Date.now();
+  const { prisma, pool } = getPrisma();
 
   try {
     const result = await prisma.user.findFirst({
@@ -23,9 +24,11 @@ export async function GET() {
       {
         ok: false,
         elapsedMs: Date.now() - start,
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       },
       { status: 500 }
     );
+  } finally {
+    await pool.end();
   }
 }

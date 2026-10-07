@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import { getRedisConnection, ensureRedisConnected, withTimeout } from "@/lib/redis";
+import { getPrisma } from "@/lib/prisma";
+import { createRedisClient, withTimeout } from "@/lib/redis";
 
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { prisma, pool } = getPrisma();
   try {
     const { id } = await params;
 
@@ -27,9 +28,9 @@ export async function GET(
     let jobProgress: any = null;
     let jobState: string = "completed";
 
+    const connection = createRedisClient();
     try {
-      const connection = getRedisConnection();
-      await ensureRedisConnected(connection);
+      await withTimeout(connection.connect(), 4000, "Redis connect");
       const queue = new Queue("master-queue", { connection });
       const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
 
@@ -37,8 +38,18 @@ export async function GET(
         jobState = await withTimeout(job.getState(), 4000, "BullMQ getState");
         jobProgress = job.progress;
       }
+      try {
+        await withTimeout(queue.close(), 1500, "BullMQ queue close");
+      } catch {
+        // ignore
+      }
     } catch (redisErr) {
-      console.warn("Could not fetch BullMQ job status:", redisErr);
+      console.warn(
+        "Could not fetch BullMQ job status:",
+        redisErr instanceof Error ? `${redisErr.name}: ${redisErr.message}` : String(redisErr)
+      );
+    } finally {
+      connection.disconnect();
     }
 
     // 3. Format leads by platform
@@ -60,9 +71,14 @@ export async function GET(
       leads
     });
   } catch (error: unknown) {
-    console.error("Error fetching campaign detail:", error);
+    console.error(
+      "Error fetching campaign detail:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
     const errorMessage = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: errorMessage }, { status: 500 });
+  } finally {
+    await pool.end();
   }
 }
 
@@ -70,6 +86,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { prisma, pool } = getPrisma();
   try {
     const { id } = await params;
 
@@ -84,16 +101,26 @@ export async function DELETE(
     });
 
     // Also attempt to remove job from BullMQ queue if present
+    const connection = createRedisClient();
     try {
-      const connection = getRedisConnection();
-      await ensureRedisConnected(connection);
+      await withTimeout(connection.connect(), 4000, "Redis connect");
       const queue = new Queue("master-queue", { connection });
       const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
       if (job) {
         await withTimeout(job.remove(), 4000, "BullMQ job.remove");
       }
+      try {
+        await withTimeout(queue.close(), 1500, "BullMQ queue close");
+      } catch {
+        // ignore
+      }
     } catch (redisErr) {
-      console.warn("Could not remove BullMQ job:", redisErr);
+      console.warn(
+        "Could not remove BullMQ job:",
+        redisErr instanceof Error ? `${redisErr.name}: ${redisErr.message}` : String(redisErr)
+      );
+    } finally {
+      connection.disconnect();
     }
 
     return NextResponse.json({
@@ -101,8 +128,13 @@ export async function DELETE(
       message: `Campaign ${id} and campaign_leads associations deleted successfully. Leads preserved.`
     });
   } catch (error: unknown) {
-    console.error("Error deleting campaign:", error);
+    console.error(
+      "Error deleting campaign:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
     const errorMessage = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: errorMessage }, { status: 500 });
+  } finally {
+    await pool.end();
   }
 }

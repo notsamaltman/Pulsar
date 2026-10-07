@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import { getRedisConnection, ensureRedisConnected, withTimeout } from "@/lib/redis";
+import { getPrisma } from "@/lib/prisma";
+import { createRedisClient, withTimeout } from "@/lib/redis";
 
 export const dynamic = 'force-dynamic';
 
@@ -11,21 +11,45 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const { prisma, pool } = getPrisma();
 
   const encoder = new TextEncoder();
-  
+
   const stream = new ReadableStream({
     async start(controller) {
+      // Per-request Redis connection for BullMQ
       let queue: Queue | null = null;
+      let redisConnection = createRedisClient();
       try {
-        const connection = getRedisConnection();
-        await ensureRedisConnected(connection);
-        queue = new Queue("master-queue", { connection });
+        await withTimeout(redisConnection.connect(), 4000, "Redis connect");
+        queue = new Queue("master-queue", { connection: redisConnection });
       } catch (redisErr) {
-        console.warn("SSE could not connect to Redis:", redisErr);
+        console.warn(
+          "SSE could not connect to Redis:",
+          redisErr instanceof Error ? `${redisErr.name}: ${redisErr.message}` : String(redisErr)
+        );
+        redisConnection.disconnect();
+        redisConnection = null as any;
       }
+
       let isClosed = false;
       let interval: ReturnType<typeof setInterval> | undefined;
+
+      const cleanupRedis = async () => {
+        if (queue) {
+          try { await withTimeout(queue.close(), 1500, "BullMQ queue close"); } catch {}
+          queue = null;
+        }
+        if (redisConnection) {
+          try { redisConnection.disconnect(); } catch {}
+          redisConnection = null as any;
+        }
+      };
+
+      const cleanupAll = async () => {
+        await cleanupRedis();
+        try { await pool.end(); } catch {}
+      };
 
       const sendEvent = (data: any) => {
         if (isClosed) return;
@@ -92,9 +116,13 @@ export async function GET(
               isClosed = true;
               try { controller.close(); } catch {}
             }
+            await cleanupAll();
           }
         } catch (err) {
-          console.error("SSE streaming error:", err);
+          console.error(
+            "SSE streaming error:",
+            err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+          );
         }
       };
 
@@ -103,12 +131,13 @@ export async function GET(
         interval = setInterval(poll, 2000);
       }
 
-      req.signal.addEventListener("abort", () => {
+      req.signal.addEventListener("abort", async () => {
         if (interval) clearInterval(interval);
         if (!isClosed) {
           isClosed = true;
           try { controller.close(); } catch {}
         }
+        await cleanupAll();
       });
     }
   });

@@ -24,7 +24,10 @@ export async function GET() {
       source = "redis";
     }
   } catch (error) {
-    console.error("Failed to query Redis for service health:", error);
+    console.error(
+      "Failed to query Redis for service health:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
   }
 
   // Fallback to in-memory if Redis had no value or threw error
@@ -39,7 +42,10 @@ export async function GET() {
   try {
     groqStatus = enrichGroqStatus(await getGroqStatus());
   } catch (error) {
-    console.error("Failed to query Groq status:", error);
+    console.error(
+      "Failed to query Groq status:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
   }
 
   return NextResponse.json({
@@ -64,7 +70,10 @@ export async function POST() {
     );
     redisUpdated = true;
   } catch (error) {
-    console.error("Failed to update Redis service health heartbeat:", error);
+    console.error(
+      "Failed to update Redis service health heartbeat:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
   }
 
   return NextResponse.json({

@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Queue } from 'bullmq';
-import { getRedisConnection, getGroqStatus, enrichGroqStatus, ensureRedisConnected, withTimeout } from '@/lib/redis';
+import { createRedisClient, getGroqStatus, enrichGroqStatus, withTimeout } from '@/lib/redis';
 import { getQueueTotalJobs } from '@/lib/queue';
 
 export async function GET(req: NextRequest) {
+  const connection = createRedisClient();
   try {
     const { searchParams } = new URL(req.url);
     const jobId = searchParams.get('jobId');
 
-    const connection = getRedisConnection();
-    await ensureRedisConnected(connection);
+    await withTimeout(connection.connect(), 4000, 'Redis connect');
     const masterQueue = new Queue('master-queue', { connection });
 
     const totalWaiting = await withTimeout(masterQueue.getWaitingCount(), 4000, 'BullMQ getWaitingCount');
@@ -63,11 +63,17 @@ export async function GET(req: NextRequest) {
       groqStatus,
       jobDetail,
     });
-  } catch (error: any) {
-    console.error('Error fetching queue status:', error);
+  } catch (error: unknown) {
+    console.error(
+      'Error fetching queue status:',
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
+    const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
     return NextResponse.json(
-      { success: false, error: error.message || 'Internal Server Error' },
+      { success: false, error: errorMessage },
       { status: 500 }
     );
+  } finally {
+    connection.disconnect();
   }
 }
