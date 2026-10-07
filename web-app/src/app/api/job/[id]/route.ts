@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Queue } from "bullmq";
-import { getRedisConnection, ensureRedisConnected, withTimeout } from "@/lib/redis";
+import { createRedisClient, withTimeout } from "@/lib/redis";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const connection = createRedisClient();
   try {
     const { id } = await params;
-    
-    const connection = getRedisConnection();
-    await ensureRedisConnected(connection);
+
+    await withTimeout(connection.connect(), 4000, "Redis connect");
     const queue = new Queue("company_build-queue", { connection });
     const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
 
@@ -28,11 +28,13 @@ export async function GET(
       progress, // This will contain our {status, message, result}
       data: job.data,
     });
-  } catch (error) {
-    console.error("Error fetching job status:", error);
+  } catch (error: unknown) {
+    console.error("Error fetching job status:", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 }
     );
+  } finally {
+    connection.disconnect();
   }
 }

@@ -1,6 +1,6 @@
 // lib/queue.ts
 import { Queue } from 'bullmq';
-import { getRedisConnection, ensureRedisConnected, withTimeout } from './redis';
+import { createRedisClient, withTimeout } from './redis';
 
 export interface Job {
   jobId: string;
@@ -19,30 +19,34 @@ async function safeCloseQueue(q: Queue) {
   try {
     await withTimeout(q.close(), 1500, 'BullMQ queue close');
   } catch (e) {
-    console.warn('Queue close skipped:', e);
+    console.warn('Queue close skipped:', e instanceof Error ? `${e.name}: ${e.message}` : String(e));
   }
 }
 
 export async function getQueueTotalJobs(): Promise<number> {
-  const connection = getRedisConnection();
-  await ensureRedisConnected(connection);
-  let total = 0;
-  for (const qName of KNOWN_QUEUES) {
-    const q = new Queue(qName, { connection });
-    try {
-      const counts = await withTimeout(
-        q.getJobCounts('waiting', 'active', 'delayed'),
-        4000,
-        `BullMQ getJobCounts ${qName}`
-      );
-      total += (counts.waiting || 0) + (counts.active || 0) + (counts.delayed || 0);
-    } catch (e) {
-      console.error(`Error counting jobs for queue ${qName}:`, e);
-    } finally {
-      await safeCloseQueue(q);
+  const connection = createRedisClient();
+  try {
+    await withTimeout(connection.connect(), 4000, 'Redis connect');
+    let total = 0;
+    for (const qName of KNOWN_QUEUES) {
+      const q = new Queue(qName, { connection });
+      try {
+        const counts = await withTimeout(
+          q.getJobCounts('waiting', 'active', 'delayed'),
+          4000,
+          `BullMQ getJobCounts ${qName}`
+        );
+        total += (counts.waiting || 0) + (counts.active || 0) + (counts.delayed || 0);
+      } catch (e) {
+        console.error(`Error counting jobs for queue ${qName}:`, e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+      } finally {
+        await safeCloseQueue(q);
+      }
     }
+    return total;
+  } finally {
+    connection.disconnect();
   }
-  return total;
 }
 
 /**
@@ -61,36 +65,40 @@ export async function enqueue(job: Job) {
     throw error;
   }
 
-  const connection = getRedisConnection();
-  await ensureRedisConnected(connection);
-  const queueName = `${jobType}-queue`;
-  const requestQueue = new Queue(queueName, { connection });
-
+  const connection = createRedisClient();
   try {
-    const addedJob = await withTimeout(
-      requestQueue.add(
-        `${jobId}-${jobType}-${Date.now()}`,
-        { ...jobBody, jobId, jobType },
-        {
-          priority,
-          removeOnComplete: {
-            age: 3600,
-            count: 100,
-          },
-          removeOnFail: {
-            age: 86400,
-            count: 500,
-          },
-        }
-      ),
-      8000,
-      'BullMQ enqueue'
-    );
+    await withTimeout(connection.connect(), 4000, 'Redis connect');
+    const queueName = `${jobType}-queue`;
+    const requestQueue = new Queue(queueName, { connection });
 
-    console.log(`[+] Enqueued job ${jobId} on ${queueName} with priority ${priority}. Current total queue count: ${currentCount + 1}/${maxCapacity}`);
-    return addedJob;
+    try {
+      const addedJob = await withTimeout(
+        requestQueue.add(
+          `${jobId}-${jobType}-${Date.now()}`,
+          { ...jobBody, jobId, jobType },
+          {
+            priority,
+            removeOnComplete: {
+              age: 3600,
+              count: 100,
+            },
+            removeOnFail: {
+              age: 86400,
+              count: 500,
+            },
+          }
+        ),
+        8000,
+        'BullMQ enqueue'
+      );
+
+      console.log(`[+] Enqueued job ${jobId} on ${queueName} with priority ${priority}. Current total queue count: ${currentCount + 1}/${maxCapacity}`);
+      return addedJob;
+    } finally {
+      await safeCloseQueue(requestQueue);
+    }
   } finally {
-    await safeCloseQueue(requestQueue);
+    connection.disconnect();
   }
 }
 

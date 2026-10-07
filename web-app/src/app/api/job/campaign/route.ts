@@ -4,10 +4,11 @@ import { acquireUserJobLock, releaseUserJobLock } from "@/lib/redis";
 import { v4 as uuidv4 } from "uuid";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
   let userId: string | null = null;
+  const { prisma, pool } = getPrisma();
   try {
     const session = await getServerSession(authOptions);
     userId = (session?.user as Record<string, any>)?.id || null;
@@ -127,7 +128,7 @@ export async function POST(req: NextRequest) {
       });
       console.log(`[+] Saved Campaign '${campaignName}' (${jobId}) to Prisma database with status 'queue'.`);
     } catch (dbErr) {
-      console.error("[-] Error saving Campaign to Prisma database:", dbErr);
+      console.error("[-] Error saving Campaign to Prisma database:", dbErr instanceof Error ? `${dbErr.name}: ${dbErr.message}` : String(dbErr));
     }
 
     const job = {
@@ -154,7 +155,7 @@ export async function POST(req: NextRequest) {
     if (userId) {
       await releaseUserJobLock(userId);
     }
-    console.error("Error enqueuing campaign build job:", error);
+    console.error("Error enqueuing campaign build job:", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
     const errObj = error as { code?: string; message?: string; statusCode?: number };
 
     if (errObj.code === "SERVER_BUSY") {
@@ -172,6 +173,7 @@ export async function POST(req: NextRequest) {
       { error: "Failed to enqueue job", details: errorMessage },
       { status: 500 }
     );
+  } finally {
+    await pool.end();
   }
 }
-
