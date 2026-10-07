@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import { getRedisConnection } from "@/lib/redis";
+import { getRedisConnection, ensureRedisConnected, withTimeout } from "@/lib/redis";
 
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +16,16 @@ export async function GET(
   
   const stream = new ReadableStream({
     async start(controller) {
-      const connection = getRedisConnection();
-      const queue = new Queue("master-queue", { connection });
+      let queue: Queue | null = null;
+      try {
+        const connection = getRedisConnection();
+        await ensureRedisConnected(connection);
+        queue = new Queue("master-queue", { connection });
+      } catch (redisErr) {
+        console.warn("SSE could not connect to Redis:", redisErr);
+      }
       let isClosed = false;
+      let interval: ReturnType<typeof setInterval> | undefined;
 
       const sendEvent = (data: any) => {
         if (isClosed) return;
@@ -29,11 +36,10 @@ export async function GET(
         }
       };
 
-      // Poll database and queue progress every 2 seconds
-      const interval = setInterval(async () => {
+      const poll = async () => {
         try {
           if (isClosed) {
-            clearInterval(interval);
+            if (interval) clearInterval(interval);
             return;
           }
 
@@ -41,10 +47,12 @@ export async function GET(
           let jobState = "unknown";
           let jobProgress = null;
 
-          const job = await queue.getJob(id);
-          if (job) {
-            jobState = await job.getState();
-            jobProgress = job.progress;
+          if (queue) {
+            const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
+            if (job) {
+              jobState = await withTimeout(job.getState(), 4000, "BullMQ getState");
+              jobProgress = job.progress;
+            }
           }
 
           // Fetch leads from database
@@ -79,8 +87,7 @@ export async function GET(
           });
 
           if (jobState === "completed" || jobState === "failed") {
-            // Close stream after terminal state
-            clearInterval(interval);
+            if (interval) clearInterval(interval);
             if (!isClosed) {
               isClosed = true;
               try { controller.close(); } catch {}
@@ -89,10 +96,15 @@ export async function GET(
         } catch (err) {
           console.error("SSE streaming error:", err);
         }
-      }, 2000);
+      };
+
+      await poll();
+      if (!isClosed) {
+        interval = setInterval(poll, 2000);
+      }
 
       req.signal.addEventListener("abort", () => {
-        clearInterval(interval);
+        if (interval) clearInterval(interval);
         if (!isClosed) {
           isClosed = true;
           try { controller.close(); } catch {}

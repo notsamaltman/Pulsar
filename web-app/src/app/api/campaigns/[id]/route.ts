@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import { getRedisConnection } from "@/lib/redis";
+import { getRedisConnection, ensureRedisConnected, withTimeout } from "@/lib/redis";
 
 
 export async function GET(
@@ -29,11 +29,12 @@ export async function GET(
 
     try {
       const connection = getRedisConnection();
+      await ensureRedisConnected(connection);
       const queue = new Queue("master-queue", { connection });
-      const job = await queue.getJob(id);
+      const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
 
       if (job) {
-        jobState = await job.getState();
+        jobState = await withTimeout(job.getState(), 4000, "BullMQ getState");
         jobProgress = job.progress;
       }
     } catch (redisErr) {
@@ -85,10 +86,11 @@ export async function DELETE(
     // Also attempt to remove job from BullMQ queue if present
     try {
       const connection = getRedisConnection();
+      await ensureRedisConnected(connection);
       const queue = new Queue("master-queue", { connection });
-      const job = await queue.getJob(id);
+      const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
       if (job) {
-        await job.remove();
+        await withTimeout(job.remove(), 4000, "BullMQ job.remove");
       }
     } catch (redisErr) {
       console.warn("Could not remove BullMQ job:", redisErr);

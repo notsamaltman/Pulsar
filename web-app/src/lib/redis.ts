@@ -2,21 +2,63 @@ import IORedis, { RedisOptions } from 'ioredis';
 
 let redisConnectionInstance: IORedis | null = null;
 
+const REDIS_CONNECT_TIMEOUT_MS = 4000;
+const REDIS_COMMAND_TIMEOUT_MS = 4000;
+
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 /**
- * Creates and returns an IORedis connection instance configured for Upstash or standard Redis environments.
- * Upstash Redis URLs typically start with `rediss://` (TLS enabled).
- * Uses lazyConnect: true to prevent automatic connection attempts during build/prerender time.
+ * Creates and returns an IORedis connection.
+ *
+ * Cloudflare Workers cannot keep hanging TCP sockets. ioredis with
+ * maxRetriesPerRequest: null (BullMQ's default) will retry forever and
+ * the isolate is cancelled: "Worker hung and would never generate a response".
  */
 export function getRedisConnection(): IORedis {
   if (redisConnectionInstance) {
-    return redisConnectionInstance;
+    const status = redisConnectionInstance.status;
+    if (status === 'end' || status === 'close') {
+      try {
+        redisConnectionInstance.disconnect();
+      } catch {
+        // ignore
+      }
+      redisConnectionInstance = null;
+    } else {
+      return redisConnectionInstance;
+    }
   }
 
   const url = process.env.REDIS_URL;
-
+  // Always fail fast. Infinite ioredis retries pin Cloudflare isolates
+  // ("Worker hung and would never generate a response"). The Python
+  // BullMQ worker is a separate process and does not need this client.
   const options: RedisOptions = {
-    maxRetriesPerRequest: null,
-    lazyConnect: false,
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+    lazyConnect: true,
+    connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+    commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
+    keepAlive: 0,
+    enableReadyCheck: true,
+    retryStrategy: (times) => (times > 1 ? null : 200),
+    reconnectOnError: () => false,
   };
 
   if (url) {
@@ -27,7 +69,6 @@ export function getRedisConnection(): IORedis {
     }
     redisConnectionInstance = new IORedis(url, options);
   } else {
-    // Fallback to explicit host/port or localhost
     const host = process.env.REDIS_HOST || 'localhost';
     const port = parseInt(process.env.REDIS_PORT || '6379', 10);
     const password = process.env.REDIS_PASSWORD || undefined;
@@ -40,9 +81,49 @@ export function getRedisConnection(): IORedis {
     });
   }
 
+  redisConnectionInstance.on('error', (err) => {
+    console.error('Redis client error:', err?.message || err);
+  });
+
   return redisConnectionInstance;
 }
 
+export async function ensureRedisConnected(redis: IORedis = getRedisConnection()): Promise<IORedis> {
+  if (redis.status === 'ready') {
+    return redis;
+  }
+  if (redis.status === 'wait') {
+    await withTimeout(redis.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis connect');
+  } else if (redis.status === 'connecting' || redis.status === 'reconnecting') {
+    await withTimeout(
+      new Promise<void>((resolve, reject) => {
+        const onReady = () => {
+          cleanup();
+          resolve();
+        };
+        const onError = (err: Error) => {
+          cleanup();
+          reject(err);
+        };
+        const cleanup = () => {
+          redis.off('ready', onReady);
+          redis.off('error', onError);
+        };
+        redis.once('ready', onReady);
+        redis.once('error', onError);
+      }),
+      REDIS_CONNECT_TIMEOUT_MS,
+      'Redis connect wait'
+    );
+  }
+  return redis;
+}
+
+export async function redisCommand<T>(label: string, fn: (redis: IORedis) => Promise<T>): Promise<T> {
+  const redis = getRedisConnection();
+  await ensureRedisConnected(redis);
+  return withTimeout(fn(redis), REDIS_COMMAND_TIMEOUT_MS, label);
+}
 
 export interface GroqStatus {
   status: 'AVAILABLE' | 'TEMPORARILY_RATE_LIMITED' | 'DAILY_QUOTA_EXHAUSTED' | 'UNAVAILABLE';
@@ -53,12 +134,10 @@ export interface GroqStatus {
 }
 
 export async function getGroqStatus(): Promise<GroqStatus> {
-  const redis = getRedisConnection();
   try {
-    const data = await redis.get('groq:status_info');
+    const data = await redisCommand('Redis GET groq:status_info', (redis) => redis.get('groq:status_info'));
     if (data) {
       const parsed = JSON.parse(data);
-      // Check if reset time has passed
       if (parsed.resetAt && Date.now() >= parsed.resetAt) {
         return { status: 'AVAILABLE', resetAt: null };
       }
@@ -68,12 +147,13 @@ export async function getGroqStatus(): Promise<GroqStatus> {
     console.error('Error fetching Groq status from Redis:', e);
   }
   return { status: 'AVAILABLE', resetAt: null };
-} 
+}
 
 export async function setGroqStatus(statusInfo: GroqStatus): Promise<void> {
-  const redis = getRedisConnection();
   try {
-    await redis.set('groq:status_info', JSON.stringify(statusInfo));
+    await redisCommand('Redis SET groq:status_info', (redis) =>
+      redis.set('groq:status_info', JSON.stringify(statusInfo))
+    );
   } catch (e) {
     console.error('Error setting Groq status in Redis:', e);
   }
@@ -117,16 +197,14 @@ export function enrichGroqStatus(status: GroqStatus): EnrichedGroqStatus {
  * Uses atomic Redis SETNX key to prevent simultaneous double-enqueue race conditions.
  */
 export async function acquireUserJobLock(userId: string, ttlSeconds: number = 30): Promise<boolean> {
-  const redis = getRedisConnection();
-  const lockKey = `user:job_lock:${userId}`;
-  const result = await redis.set(lockKey, 'locked', 'EX', ttlSeconds, 'NX');
+  const result = await redisCommand('Redis SETNX job lock', (redis) =>
+    redis.set(`user:job_lock:${userId}`, 'locked', 'EX', ttlSeconds, 'NX')
+  );
   return result === 'OK';
 }
 
 export async function releaseUserJobLock(userId: string): Promise<void> {
-  const redis = getRedisConnection();
-  await redis.del(`user:job_lock:${userId}`);
+  await redisCommand('Redis DEL job lock', (redis) => redis.del(`user:job_lock:${userId}`));
 }
 
 export default getRedisConnection;
-

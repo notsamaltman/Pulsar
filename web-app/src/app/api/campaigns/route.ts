@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Queue } from "bullmq";
-import { getRedisConnection, getGroqStatus, isGroqExhausted } from "@/lib/redis";
+import { getRedisConnection, getGroqStatus, isGroqExhausted, ensureRedisConnected, withTimeout } from "@/lib/redis";
 
 export async function GET(req: NextRequest) {
   try {
@@ -29,10 +29,15 @@ export async function GET(req: NextRequest) {
 
     try {
       const connection = getRedisConnection();
+      await ensureRedisConnected(connection);
       const masterQueue = new Queue("master-queue", { connection });
-      waitingJobs = await masterQueue.getWaiting();
+      waitingJobs = await withTimeout(masterQueue.getWaiting(), 4000, "BullMQ getWaiting");
       groqStatus = await getGroqStatus();
-      await masterQueue.close();
+      try {
+        await withTimeout(masterQueue.close(), 1500, "BullMQ queue close");
+      } catch {
+        // ignore
+      }
     } catch (e) {
       console.warn("Could not query master-queue for campaign ETAs:", e);
     }

@@ -22,8 +22,13 @@ export function ServiceHealthProvider({ children }: { children: React.ReactNode 
   const lastToastKey = useRef<string | null>(null);
 
   const checkHealth = async () => {
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 6000);
     try {
-      const res = await fetch("/api/service-health", { cache: "no-store" });
+      const res = await fetch("/api/service-health", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.mlServiceActive) {
@@ -49,6 +54,8 @@ export function ServiceHealthProvider({ children }: { children: React.ReactNode 
     } catch (error) {
       console.error("Health check error:", error);
       setIsOffline(true);
+    } finally {
+      clearTimeout(abortTimer);
     }
   };
 

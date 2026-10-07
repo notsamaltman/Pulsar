@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Queue } from "bullmq";
-import { getRedisConnection } from "@/lib/redis";
-
-const connection = getRedisConnection();
+import { getRedisConnection, ensureRedisConnected, withTimeout } from "@/lib/redis";
 
 export async function GET(
   req: NextRequest,
@@ -11,17 +9,17 @@ export async function GET(
   try {
     const { id } = await params;
     
-    // We need to know which queue to check. 
-    // Since jobs are enqueued to 'company_build-queue', we check that.
+    const connection = getRedisConnection();
+    await ensureRedisConnected(connection);
     const queue = new Queue("company_build-queue", { connection });
-    const job = await queue.getJob(id);
+    const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
 
     if (!job) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 });
     }
 
     // Get progress and state
-    const state = await job.getState();
+    const state = await withTimeout(job.getState(), 4000, "BullMQ getState");
     const progress = job.progress;
 
     return NextResponse.json({

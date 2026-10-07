@@ -2,6 +2,7 @@ import NextAuth, { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
+import { withTimeout } from "@/lib/redis";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 // Configure S3 Client
@@ -87,27 +88,44 @@ export const authOptions: NextAuthOptions = {
         token.refreshToken = account.refresh_token;
         token.id = user.id;
         
-        // Sync image if it's still from Google OR if it's missing but available from the login
-        const updatedImage = await syncProfileImage(user.id, user.image);
-        token.image = updatedImage;
+        try {
+          const updatedImage = await Promise.race([
+            syncProfileImage(user.id, user.image),
+            new Promise<string | null | undefined>((_, reject) =>
+              setTimeout(() => reject(new Error("Profile image sync timed out")), 8000)
+            ),
+          ]);
+          token.image = updatedImage;
+        } catch (syncError) {
+          console.warn("Skipping profile image sync:", syncError);
+          token.image = user.image;
+        }
       }
 
       // Always fetch latest tier from DB or check admin email
       if (token.id) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: token.id as string },
-          select: { email: true, tier: true }
-        });
-        if (dbUser) {
-          if (dbUser.email === "panwalkarsoham@gmail.com" && dbUser.tier !== "elite") {
-            await prisma.user.update({
+        try {
+          const dbUser = await withTimeout(
+            prisma.user.findUnique({
               where: { id: token.id as string },
-              data: { tier: "elite" }
-            });
-            token.tier = "elite";
-          } else {
-            token.tier = dbUser.tier || "free";
+              select: { email: true, tier: true }
+            }),
+            8000,
+            "JWT user lookup"
+          );
+          if (dbUser) {
+            if (dbUser.email === "panwalkarsoham@gmail.com" && dbUser.tier !== "elite") {
+              await prisma.user.update({
+                where: { id: token.id as string },
+                data: { tier: "elite" }
+              });
+              token.tier = "elite";
+            } else {
+              token.tier = dbUser.tier || "free";
+            }
           }
+        } catch (dbError) {
+          console.warn("Skipping JWT tier lookup:", dbError);
         }
       }
 
@@ -140,7 +158,15 @@ export const authOptions: NextAuthOptions = {
   },
   events: {
     async createUser({ user }) {
-      await syncProfileImage(user.id, user.image);
+      try {
+        await withTimeout(
+          syncProfileImage(user.id, user.image),
+          8000,
+          "createUser image sync"
+        );
+      } catch (syncError) {
+        console.warn("Skipping createUser image sync:", syncError);
+      }
     }
   }
 };

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { getRedisConnection, getGroqStatus, enrichGroqStatus } from "@/lib/redis";
+import {
+  redisCommand,
+  getGroqStatus,
+  enrichGroqStatus,
+} from "@/lib/redis";
 
 const HEARTBEAT_KEY = "service_health:ml_service";
 const HEARTBEAT_TIMEOUT_MS = 30000; // 30 seconds threshold
@@ -12,11 +16,9 @@ export async function GET() {
   let source = "memory";
 
   try {
-    const redis = getRedisConnection();
-    if (redis.status === "wait") {
-      await redis.connect();
-    }
-    const redisVal = await redis.get(HEARTBEAT_KEY);
+    const redisVal = await redisCommand("Redis GET service health", (redis) =>
+      redis.get(HEARTBEAT_KEY)
+    );
     if (redisVal) {
       lastHeartbeat = parseInt(String(redisVal), 10);
       source = "redis";
@@ -57,12 +59,9 @@ export async function POST() {
 
   let redisUpdated = false;
   try {
-    const redis = getRedisConnection();
-    if (redis.status === "wait") {
-      await redis.connect();
-    }
-    // Set heartbeat timestamp with 45s TTL
-    await redis.set(HEARTBEAT_KEY, String(now), "EX", 45);
+    await redisCommand("Redis SET service health", (redis) =>
+      redis.set(HEARTBEAT_KEY, String(now), "EX", 45)
+    );
     redisUpdated = true;
   } catch (error) {
     console.error("Failed to update Redis service health heartbeat:", error);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Queue } from 'bullmq';
-import { getRedisConnection, getGroqStatus, enrichGroqStatus } from '@/lib/redis';
+import { getRedisConnection, getGroqStatus, enrichGroqStatus, ensureRedisConnected, withTimeout } from '@/lib/redis';
 import { getQueueTotalJobs } from '@/lib/queue';
 
 export async function GET(req: NextRequest) {
@@ -9,10 +9,11 @@ export async function GET(req: NextRequest) {
     const jobId = searchParams.get('jobId');
 
     const connection = getRedisConnection();
+    await ensureRedisConnected(connection);
     const masterQueue = new Queue('master-queue', { connection });
 
-    const totalWaiting = await masterQueue.getWaitingCount();
-    const totalActive = await masterQueue.getActiveCount();
+    const totalWaiting = await withTimeout(masterQueue.getWaitingCount(), 4000, 'BullMQ getWaitingCount');
+    const totalActive = await withTimeout(masterQueue.getActiveCount(), 4000, 'BullMQ getActiveCount');
     const totalQueueSize = await getQueueTotalJobs();
     const groqStatus = enrichGroqStatus(await getGroqStatus());
 
@@ -47,7 +48,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    await masterQueue.close();
+    try {
+      await withTimeout(masterQueue.close(), 1500, 'BullMQ queue close');
+    } catch {
+      // ignore
+    }
 
     return NextResponse.json({
       success: true,

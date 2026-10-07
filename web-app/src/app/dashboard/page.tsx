@@ -16,6 +16,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { CreateCompanyModal, AnimatedButton, ContactAdminModal } from "@/components";
+import { AuthLoading } from "@/components/AuthLoading";
 import { LogoutButton } from "@/components/LogoutButton";
 import { CompanyCard } from "@/components/CompanyCard";
 import type { Company } from "@/generated/prisma/client";
@@ -80,7 +81,7 @@ export default function DashboardPage() {
     }
   };
 
-  if (status === "loading") return null;
+  if (status === "loading") return <AuthLoading />;
   if (!session) return null;
 
   const userInitials = session.user?.name
