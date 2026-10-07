@@ -86,18 +86,18 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            className="w-full max-w-4xl relative z-10"
+            className="w-full max-w-4xl max-h-[92vh] flex flex-col relative z-10"
           >
             <button 
               onClick={onClose}
-              className="absolute top-6 right-6 z-50 text-[#888888] hover:text-white transition-colors bg-[#171717] rounded-full p-2"
+              className="absolute top-4 right-4 sm:top-6 sm:right-6 z-50 text-[#888888] hover:text-white transition-colors bg-[#171717] rounded-full p-2"
               title="Close"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
             {apiError && (
-              <div className="mb-4 mx-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-rose-300">
-                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              <div className="mb-3 mx-4 sm:mx-6 p-3 sm:p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-rose-300">
+                <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="text-xs font-bold uppercase tracking-wider text-rose-200">{apiError.title}</p>
                   <p className="text-xs text-rose-300/90">{apiError.message}</p>
@@ -155,9 +155,9 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
               }}
 
               stepCircleContainerClassName="!rounded-2xl"
-              stepContainerClassName="!px-10 !py-8 !border-b border-[#2A2A2A]"
+              stepContainerClassName="!px-4 !py-4 sm:!px-8 sm:!py-6 !border-b border-[#2A2A2A]"
               contentClassName="!p-0"
-              footerClassName="!px-10 !py-6 !border-t border-[#2A2A2A]"
+              footerClassName="!px-4 !py-4 sm:!px-8 sm:!py-5 !border-t border-[#2A2A2A]"
               disableStepIndicators={false}
             >
               {/* Step 1: Basics */}
@@ -165,8 +165,8 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 title="Campaign Basics" 
                 description="Define the core metadata and objective of this campaign."
               >
-                <div className="grid grid-cols-2 gap-6 pt-2">
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Campaign Name *</label>
                     <input 
                       value={formData.campaignName}
@@ -176,7 +176,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     />
                     {errors.campaignName && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.campaignName}</p>}
                   </div>
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Goal Type</label>
                     <select 
                       value={formData.goalType}
@@ -188,7 +188,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                       <option>Hiring</option>
                     </select>
                   </div>
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Industry / Niche *</label>
                     <input 
                       value={formData.industry}
@@ -198,7 +198,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     />
                     {errors.industry && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.industry}</p>}
                   </div>
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Geographic Target *</label>
                     <input 
                       value={formData.geoTarget}
@@ -208,7 +208,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     />
                     {errors.geoTarget && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.geoTarget}</p>}
                   </div>
-                  <div className="space-y-2 col-span-2">
+                  <div className="space-y-2 col-span-full">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Budget Range (Paid vs Organic)</label>
                     <select 
                       value={formData.budget}
@@ -228,8 +228,8 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 title="Audience Definition" 
                 description="Who precisely are we targeting and filtering out?"
               >
-                <div className="grid grid-cols-2 gap-6 pt-2">
-                  <div className="space-y-2 col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
+                  <div className="space-y-2 col-span-full">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Target Profile (Title, Niche, Size) *</label>
                     <input 
                       value={formData.targetProfile}
@@ -239,7 +239,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     />
                     {errors.targetProfile && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.targetProfile}</p>}
                   </div>
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Focus</label>
                     <select 
                       value={formData.focus}
@@ -250,7 +250,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                       <option>Both</option>
                     </select>
                   </div>
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Minimum Follower Count (Optional)</label>
                     <input 
                       value={formData.minFollowers}
@@ -259,7 +259,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                       placeholder="e.g. 10,000" 
                     />
                   </div>
-                  <div className="space-y-2 col-span-2">
+                  <div className="space-y-2 col-span-full">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Exclusions (Negative Filters)</label>
                     <textarea 
                       value={formData.exclusions}
@@ -306,7 +306,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                   
                   <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-6 space-y-5">
                     <h4 className="text-sm font-bold text-white uppercase tracking-widest">Influencer / Creator Signals</h4>
-                    <div className="grid grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Min. Engagement Rate</label>
                         <input 
@@ -335,10 +335,10 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 title="Outreach Preferences" 
                 description="Define the execution logistics for engaging the audience."
               >
-                <div className="grid grid-cols-2 gap-6 pt-2">
-                    <div className="flex flex-col gap-2 col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
+                    <div className="flex flex-col gap-2 col-span-full">
                        <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Target Platforms (Restricts Agents &amp; UI Tabs) *</label>
-                       <div className="flex gap-4">
+                       <div className="flex flex-col xs:flex-row gap-3">
                          {[
                            { id: "youtube", label: "YouTube" },
                            { id: "instagram", label: "Instagram" },
@@ -379,12 +379,12 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                        </div>
                     </div>
 
-                    <div className="space-y-3 col-span-2">
+                    <div className="space-y-3 col-span-full">
                     <div className="flex items-center justify-between">
                        <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Preferred Channels *</label>
                        {errors.channels && <span className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.channels}</span>}
                     </div>
-                    <div className="flex gap-4">
+                    <div className="flex flex-col xs:flex-row gap-3">
                       {['Email', 'LinkedIn InMail', 'Twitter DM'].map((chan, i) => (
                          <label key={i} className="flex-1">
                            <input 
@@ -400,7 +400,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                       ))}
                     </div>
                   </div>
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Messaging Tone</label>
                     <select 
                       value={formData.tone}
@@ -412,7 +412,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                       <option>Consultative</option>
                     </select>
                   </div>
-                  <div className="space-y-2 col-span-2 md:col-span-1">
+                  <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Sequence Length</label>
                     <select 
                       value={formData.sequence}

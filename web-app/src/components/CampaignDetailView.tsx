@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import * as XLSX from "xlsx";
 import { 
   Rocket, 
   Loader2, 
@@ -13,7 +14,8 @@ import {
   Layers,
   Trash2,
   CheckCircle2,
-  Lock
+  Lock,
+  Download
 } from "lucide-react";
 
 const YoutubeIcon = ({ className }: { className?: string }) => (
@@ -67,7 +69,10 @@ export default function CampaignDetailView({
   const { data: session } = useSession();
   const isElite = (session?.user as { tier?: string })?.tier === "elite" || session?.user?.email === "panwalkarsoham@gmail.com";
 
-  const [activeTab, setActiveTab] = useState<"youtube" | "instagram" | "producthunt">("youtube");
+  const [activeTab, setActiveTab] = useState<"youtube" | "instagram" | "producthunt">(() => {
+    const first = (platforms && platforms.length > 0 ? platforms[0] : "youtube").toLowerCase();
+    return (first as "youtube" | "instagram" | "producthunt");
+  });
   const [leads, setLeads] = useState<Lead[]>([]);
   const [campaignStatus, setCampaignStatus] = useState<string>(status || "complete");
   const [loading, setLoading] = useState<boolean>(true);
@@ -214,6 +219,62 @@ export default function CampaignDetailView({
     }
   };
 
+  const handleExportLeads = () => {
+    if (leads.length === 0) return;
+
+    const rows = leads.map(lead => {
+      const prof = lead.profile || {};
+      const rawName = prof.full_name || prof.name || prof.channel_name || lead.handle || prof.username || "";
+      const name = typeof rawName === "string" ? rawName : String(rawName);
+      const handle = lead.handle || prof.username || prof.custom_url || "";
+      const platform = lead.platform || "";
+      const followers = lead.followerCount || prof.follower_count || prof.subscriber_count || "";
+      const engagement = lead.engagementRate || prof.engagement_rate || "";
+      const country = lead.geoCountry || prof.country || "";
+      const email = prof.email || prof.contact_email || "";
+      const bio = prof.biography || prof.description || prof.bio || "";
+      const niche = Array.isArray(lead.niche) ? lead.niche.join(", ") : (lead.niche || "");
+      const icpScore = lead.icpScore || "";
+
+      let profileUrl = "";
+      const rawHandle = handle.replace(/^@/, "").trim();
+      if (platform.includes("youtube")) {
+        profileUrl = prof.channel_id ? `https://www.youtube.com/channel/${prof.channel_id}` : rawHandle ? `https://www.youtube.com/@${rawHandle}` : "";
+      } else if (platform.includes("instagram")) {
+        profileUrl = rawHandle ? `https://www.instagram.com/${rawHandle}/` : "";
+      } else if (platform.includes("producthunt")) {
+        profileUrl = prof.url || (rawHandle ? `https://www.producthunt.com/@${rawHandle}` : "");
+      }
+
+      return {
+        Platform: platform,
+        Name: name,
+        Handle: handle,
+        "Profile URL": profileUrl,
+        Email: email,
+        Followers: followers,
+        "Engagement Rate": engagement ? `${(Number(engagement) * 100).toFixed(2)}%` : "",
+        Country: country,
+        Niche: niche,
+        "ICP Score": icpScore,
+        Bio: typeof bio === "string" ? bio : JSON.stringify(bio),
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Leads");
+
+    // Auto-size columns
+    const colWidths = Object.keys(rows[0] || {}).map(key => ({
+      wch: Math.max(key.length, ...rows.map(r => String(r[key as keyof typeof r] || "").length).slice(0, 50))
+    }));
+    worksheet["!cols"] = colWidths;
+
+    const filename = `${campaignName.replace(/\s+/g, "_")}_leads.xlsx`;
+    XLSX.writeFile(workbook, filename);
+  };
+
   const youtubeLeads = leads.filter(l => (l.platform || "").toLowerCase() === "youtube");
   const instagramLeads = leads.filter(l => (l.platform || "").toLowerCase() === "instagram");
   const producthuntLeads = leads.filter(l => (l.platform || "").toLowerCase().includes("producthunt"));
@@ -341,6 +402,17 @@ export default function CampaignDetailView({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Export Leads button */}
+          <button
+            onClick={handleExportLeads}
+            disabled={leads.length === 0}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all border border-[#2A2A2A] bg-[#171717] text-[#666] hover:border-emerald-500/40 hover:bg-emerald-500/8 hover:text-emerald-400 disabled:opacity-30 disabled:cursor-not-allowed"
+            title={leads.length === 0 ? "No leads to export" : `Export ${leads.length} leads to Excel`}
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Export Leads</span>
+          </button>
+
           {/* Rerun button — Elite: active purple / Free: locked red */}
           {isElite ? (
             <button

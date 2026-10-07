@@ -114,11 +114,11 @@ export default function Stepper({
 
   return (
     <div
-      className="flex min-h-full flex-1 flex-col items-center justify-center py-4 w-full"
+      className="flex flex-col w-full"
       {...rest}
     >
       <div
-        className={`w-full bg-[#171717] rounded-xl shadow-xl overflow-hidden ${stepCircleContainerClassName}`}
+        className={`w-full bg-[#171717] rounded-xl shadow-xl overflow-hidden flex flex-col ${stepCircleContainerClassName}`}
         style={{ border: '1px solid #2A2A2A' }}
       >
         <div className={`${stepContainerClassName} flex w-full items-center px-8 py-6 border-b border-[#2A2A2A]`}>
@@ -151,13 +151,13 @@ export default function Stepper({
           isCompleted={isCompleted}
           currentStep={currentStep}
           direction={direction}
-          className={`px-8 py-6 min-h-[350px] ${contentClassName}`}
+          className={`px-4 sm:px-8 py-4 sm:py-6 min-h-[280px] overflow-y-auto ${contentClassName}`}
         >
           {stepsArray[currentStep - 1]}
         </StepContentWrapper>
 
         {!isCompleted && (
-          <div className={`px-8 py-4 bg-[#131313] border-t border-[#2A2A2A] ${footerClassName}`}>
+          <div className={`px-4 sm:px-8 py-3 sm:py-4 bg-[#131313] border-t border-[#2A2A2A] ${footerClassName}`}>
             <div className={`flex items-center ${currentStep !== 1 ? 'justify-between' : 'justify-end'}`}>
               {currentStep !== 1 && (
                 <button
@@ -216,7 +216,7 @@ function StepContentWrapper({
     >
       <AnimatePresence initial={false} mode="sync" custom={direction}>
         {!isCompleted && (
-          <SlideTransition key={currentStep} direction={direction} onHeightReady={h => setParentHeight(Math.max(h, 350))}>
+          <SlideTransition key={currentStep} direction={direction} onHeightReady={h => setParentHeight(Math.max(h, 280))}>
             {children}
           </SlideTransition>
         )}
@@ -280,14 +280,14 @@ interface StepProps {
 
 export function Step({ children, title, description }: StepProps) {
   return (
-    <div className="w-full p-8 md:p-12 max-w-3xl mx-auto">
+    <div className="w-full p-4 sm:p-8 max-w-3xl mx-auto">
       {(title || description) && (
-        <div className="mb-8">
-          {title && <h3 className="text-2xl font-bold text-white mb-2">{title}</h3>}
-          {description && <p className="text-[#888888] text-sm">{description}</p>}
+        <div className="mb-5 sm:mb-8">
+          {title && <h3 className="text-lg sm:text-2xl font-bold text-white mb-1 sm:mb-2">{title}</h3>}
+          {description && <p className="text-[#888888] text-xs sm:text-sm">{description}</p>}
         </div>
       )}
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         {children}
       </div>
     </div>

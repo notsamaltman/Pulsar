@@ -138,8 +138,8 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
             className="w-full max-w-xl sm:max-w-2xl max-h-[90vh] bg-[#171717] rounded-2xl border border-[#2A2A2A] overflow-y-auto flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.5)] relative z-10"
           >
             {loading && !showResultForm ? (
-              <div className="flex flex-col items-center justify-center py-20 sm:py-32 px-6 sm:px-10 text-center space-y-8 sm:space-y-12">
-                <div className="relative flex items-center justify-center scale-125 sm:scale-150">
+              <div className="flex flex-col items-center justify-center py-12 sm:py-20 px-6 sm:px-10 text-center space-y-6 sm:space-y-10">
+                <div className="relative flex items-center justify-center scale-100 sm:scale-125">
                   <motion.div
                     animate={{ rotate: 360 }}
                     transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
