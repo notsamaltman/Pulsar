@@ -1,7 +1,5 @@
 import IORedis, { RedisOptions } from 'ioredis';
 
-let redisConnectionInstance: IORedis | null = null;
-
 const REDIS_CONNECT_TIMEOUT_MS = 4000;
 const REDIS_COMMAND_TIMEOUT_MS = 4000;
 
@@ -23,107 +21,52 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
   });
 }
 
-/**
- * Creates and returns an IORedis connection.
- *
- * Cloudflare Workers cannot keep hanging TCP sockets. ioredis with
- * maxRetriesPerRequest: null (BullMQ's default) will retry forever and
- * the isolate is cancelled: "Worker hung and would never generate a response".
- */
-export function getRedisConnection(): IORedis {
-  if (redisConnectionInstance) {
-    const status = redisConnectionInstance.status;
-    if (status === 'end' || status === 'close') {
-      try {
-        redisConnectionInstance.disconnect();
-      } catch {
-        // ignore
-      }
-      redisConnectionInstance = null;
-    } else {
-      return redisConnectionInstance;
-    }
-  }
+const baseOptions: RedisOptions = {
+  maxRetriesPerRequest: 1,
+  enableOfflineQueue: false,
+  lazyConnect: true,
+  connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+  commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
+  keepAlive: 0,
+  enableReadyCheck: true,
+  retryStrategy: () => null,
+  reconnectOnError: () => false,
+};
 
+/** Creates a NEW client. Caller MUST call disconnect(). Never cache at module scope. */
+export function createRedisClient(): IORedis {
   const url = process.env.REDIS_URL;
-  // Always fail fast. Infinite ioredis retries pin Cloudflare isolates
-  // ("Worker hung and would never generate a response"). The Python
-  // BullMQ worker is a separate process and does not need this client.
-  const options: RedisOptions = {
-    maxRetriesPerRequest: 1,
-    enableOfflineQueue: false,
-    lazyConnect: true,
-    connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
-    commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
-    keepAlive: 0,
-    enableReadyCheck: true,
-    retryStrategy: (times) => (times > 1 ? null : 200),
-    reconnectOnError: () => false,
-  };
+  let client: IORedis;
 
   if (url) {
-    if (url.startsWith('rediss://')) {
-      options.tls = {
-        rejectUnauthorized: false,
-      };
-    }
-    redisConnectionInstance = new IORedis(url, options);
+    const options: RedisOptions = { ...baseOptions };
+    if (url.startsWith('rediss://')) options.tls = { rejectUnauthorized: false };
+    client = new IORedis(url, options);
   } else {
-    const host = process.env.REDIS_HOST || 'localhost';
-    const port = parseInt(process.env.REDIS_PORT || '6379', 10);
-    const password = process.env.REDIS_PASSWORD || undefined;
-
-    redisConnectionInstance = new IORedis({
-      ...options,
-      host,
-      port,
-      password,
+    client = new IORedis({
+      ...baseOptions,
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD || undefined,
     });
   }
 
-  redisConnectionInstance.on('error', (err) => {
-    console.error('Redis client error:', err?.message || err);
-  });
+  client.on('error', (err) => console.error('Redis client error:', err?.message || err));
 
-  return redisConnectionInstance;
-}
-
-export async function ensureRedisConnected(redis: IORedis = getRedisConnection()): Promise<IORedis> {
-  if (redis.status === 'ready') {
-    return redis;
-  }
-  if (redis.status === 'wait') {
-    await withTimeout(redis.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis connect');
-  } else if (redis.status === 'connecting' || redis.status === 'reconnecting') {
-    await withTimeout(
-      new Promise<void>((resolve, reject) => {
-        const onReady = () => {
-          cleanup();
-          resolve();
-        };
-        const onError = (err: Error) => {
-          cleanup();
-          reject(err);
-        };
-        const cleanup = () => {
-          redis.off('ready', onReady);
-          redis.off('error', onError);
-        };
-        redis.once('ready', onReady);
-        redis.once('error', onError);
-      }),
-      REDIS_CONNECT_TIMEOUT_MS,
-      'Redis connect wait'
-    );
-  }
-  return redis;
+  return client;
 }
 
 export async function redisCommand<T>(label: string, fn: (redis: IORedis) => Promise<T>): Promise<T> {
-  const redis = getRedisConnection();
-  await ensureRedisConnected(redis);
-  return withTimeout(fn(redis), REDIS_COMMAND_TIMEOUT_MS, label);
+  const redis = createRedisClient();
+  try {
+    await withTimeout(redis.connect(), REDIS_CONNECT_TIMEOUT_MS, `${label} (connect)`);
+    return await withTimeout(fn(redis), REDIS_COMMAND_TIMEOUT_MS, label);
+  } finally {
+    redis.disconnect();
+  }
 }
+
+export const errMsg = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
 
 export interface GroqStatus {
   status: 'AVAILABLE' | 'TEMPORARILY_RATE_LIMITED' | 'DAILY_QUOTA_EXHAUSTED' | 'UNAVAILABLE';
@@ -144,7 +87,7 @@ export async function getGroqStatus(): Promise<GroqStatus> {
       return parsed;
     }
   } catch (e) {
-    console.error('Error fetching Groq status from Redis:', e);
+    console.error('Error fetching Groq status from Redis:', errMsg(e));
   }
   return { status: 'AVAILABLE', resetAt: null };
 }
@@ -155,7 +98,7 @@ export async function setGroqStatus(statusInfo: GroqStatus): Promise<void> {
       redis.set('groq:status_info', JSON.stringify(statusInfo))
     );
   } catch (e) {
-    console.error('Error setting Groq status in Redis:', e);
+    console.error('Error setting Groq status in Redis:', errMsg(e));
   }
 }
 
@@ -206,5 +149,3 @@ export async function acquireUserJobLock(userId: string, ttlSeconds: number = 30
 export async function releaseUserJobLock(userId: string): Promise<void> {
   await redisCommand('Redis DEL job lock', (redis) => redis.del(`user:job_lock:${userId}`));
 }
-
-export default getRedisConnection;
