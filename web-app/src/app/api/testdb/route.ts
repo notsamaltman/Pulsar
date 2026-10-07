@@ -1,6 +1,4 @@
-// app/api/test-redis/route.ts
-
-import { getRedisConnection } from "@/lib/redis";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
@@ -8,13 +6,17 @@ export async function GET() {
   const start = Date.now();
 
   try {
-    const redis = getRedisConnection();
-
-    await redis.ping();
+    const result = await prisma.user.findFirst({
+      select: {
+        id: true,
+        email: true,
+      },
+    });
 
     return Response.json({
       ok: true,
       elapsedMs: Date.now() - start,
+      user: result,
     });
   } catch (error) {
     return Response.json(

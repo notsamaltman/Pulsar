@@ -53,11 +53,22 @@ export interface GroqStatus {
 }
 
 export async function getGroqStatus(): Promise<GroqStatus> {
-  return {
-    status: 'AVAILABLE',
-    resetAt: null,
-  };
-}
+  const redis = getRedisConnection();
+  try {
+    const data = await redis.get('groq:status_info');
+    if (data) {
+      const parsed = JSON.parse(data);
+      // Check if reset time has passed
+      if (parsed.resetAt && Date.now() >= parsed.resetAt) {
+        return { status: 'AVAILABLE', resetAt: null };
+      }
+      return parsed;
+    }
+  } catch (e) {
+    console.error('Error fetching Groq status from Redis:', e);
+  }
+  return { status: 'AVAILABLE', resetAt: null };
+} 
 
 export async function setGroqStatus(statusInfo: GroqStatus): Promise<void> {
   const redis = getRedisConnection();
