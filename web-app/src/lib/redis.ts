@@ -12,11 +12,7 @@ export function getRedisConnection(): IORedis {
     return redisConnectionInstance;
   }
 
-  const url = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL;
-
-  if (!url) {
-    throw new Error("REDIS_URL is not configured");
-  }
+  const url = process.env.REDIS_URL;
 
   const options: RedisOptions = {
     maxRetriesPerRequest: null,
