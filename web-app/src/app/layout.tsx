@@ -4,6 +4,7 @@ import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Providers } from "@/components/Providers";
 import { AuthGuard } from "@/components/AuthGuard";
+import { NavigationProgress } from "@/components/NavigationProgress";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -42,6 +43,7 @@ export default function RootLayout({
       </head>
       <body className="bg-background text-on-surface selection:bg-primary/30">
         <Providers>
+          <NavigationProgress />
           <AuthGuard>
             {children}
           </AuthGuard>
