@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
       message: "Company build job enqueued successfully",
     });
   } catch (error: unknown) {
-    console.error("Error enqueuing company build job:", error);
+    console.error("Error enqueuing company build job:", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
     return NextResponse.json(
       { error: "Failed to enqueue job", details: errorMessage },

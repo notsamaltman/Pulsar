@@ -7,11 +7,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const connection = createRedisClient();
+  let queue: Queue | null = null;
   try {
     const { id } = await params;
 
     await withTimeout(connection.connect(), 4000, "Redis connect");
-    const queue = new Queue("company_build-queue", { connection });
+    queue = new Queue("company_build-queue", { connection });
     const job = await withTimeout(queue.getJob(id), 4000, "BullMQ getJob");
 
     if (!job) {
@@ -35,6 +36,9 @@ export async function GET(
       { status: 500 }
     );
   } finally {
+    if (queue) {
+      try { await withTimeout(queue.close(), 1500, "BullMQ queue close"); } catch {}
+    }
     connection.disconnect();
   }
 }

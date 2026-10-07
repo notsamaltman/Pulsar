@@ -5,12 +5,13 @@ import { getQueueTotalJobs } from '@/lib/queue';
 
 export async function GET(req: NextRequest) {
   const connection = createRedisClient();
+  let masterQueue: Queue | null = null;
   try {
     const { searchParams } = new URL(req.url);
     const jobId = searchParams.get('jobId');
 
     await withTimeout(connection.connect(), 4000, 'Redis connect');
-    const masterQueue = new Queue('master-queue', { connection });
+    masterQueue = new Queue('master-queue', { connection });
 
     const totalWaiting = await withTimeout(masterQueue.getWaitingCount(), 4000, 'BullMQ getWaitingCount');
     const totalActive = await withTimeout(masterQueue.getActiveCount(), 4000, 'BullMQ getActiveCount');
@@ -48,12 +49,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    try {
-      await withTimeout(masterQueue.close(), 1500, 'BullMQ queue close');
-    } catch {
-      // ignore
-    }
-
     return NextResponse.json({
       success: true,
       totalWaiting,
@@ -74,6 +69,9 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   } finally {
+    if (masterQueue) {
+      try { await withTimeout(masterQueue.close(), 1500, 'BullMQ queue close'); } catch {}
+    }
     connection.disconnect();
   }
 }
