@@ -395,7 +395,12 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-6 sm:py-12 px-6 sm:px-8 bg-background border-t border-white/5">
-        <div className="max-w-7xl mx-auto flex justify-center items-center">
+        <div className="max-w-7xl mx-auto flex flex-col items-center gap-3 sm:gap-4">
+          <div className="flex items-center gap-3 text-xs sm:text-sm">
+            <Link href="/terms" className="text-on-surface-variant hover:text-white transition-colors">Terms of Service</Link>
+            <span className="text-on-surface-variant">·</span>
+            <Link href="/privacy" className="text-on-surface-variant hover:text-white transition-colors">Privacy Policy</Link>
+          </div>
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center overflow-hidden rounded-md bg-white/5">
               <img src="/logo.png" className="w-full h-full object-cover" alt="Pulsar" />
