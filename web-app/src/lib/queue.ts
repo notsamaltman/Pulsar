@@ -11,10 +11,6 @@ export interface Job {
 
 const KNOWN_QUEUES = ['master-queue', 'company_build-queue'];
 
-/**
- * Checks total number of jobs currently admitted-but-not-completed across queues.
- * Counts waiting, active, and delayed jobs without loading full job objects.
- */
 async function safeCloseQueue(q: Queue) {
   try {
     await withTimeout(q.close(), 1500, 'BullMQ queue close');
@@ -23,11 +19,20 @@ async function safeCloseQueue(q: Queue) {
   }
 }
 
-export async function getQueueTotalJobs(): Promise<number> {
+/**
+ * Enqueues a job. Runs the capacity check and the add on a single Redis connection
+ * to avoid the cost of opening two separate TCP connections per request.
+ */
+export async function enqueue(job: Job) {
+  const { jobId, jobType, jobBody, priority = 5 } = job;
+  const maxCapacity = parseInt(process.env.PULSAR_MAX_QUEUE_SIZE || '500', 10);
+
   const connection = createRedisClient();
   try {
     await withTimeout(connection.connect(), 4000, 'Redis connect');
-    let total = 0;
+
+    // --- Capacity check (reuses same connection) ---
+    let currentCount = 0;
     for (const qName of KNOWN_QUEUES) {
       const q = new Queue(qName, { connection });
       try {
@@ -36,41 +41,24 @@ export async function getQueueTotalJobs(): Promise<number> {
           4000,
           `BullMQ getJobCounts ${qName}`
         );
-        total += (counts.waiting || 0) + (counts.active || 0) + (counts.delayed || 0);
+        currentCount += (counts.waiting || 0) + (counts.active || 0) + (counts.delayed || 0);
       } catch (e) {
         console.error(`Error counting jobs for queue ${qName}:`, e instanceof Error ? `${e.name}: ${e.message}` : String(e));
       } finally {
         await safeCloseQueue(q);
       }
     }
-    return total;
-  } finally {
-    connection.disconnect();
-  }
-}
 
-/**
- * Universal enqueue function to add jobs to specific queues based on jobType.
- * Enforces native BullMQ priority, retention policy, and max capacity limit (500).
- */
-export async function enqueue(job: Job) {
-  const { jobId, jobType, jobBody, priority = 5 } = job;
-  const maxCapacity = parseInt(process.env.PULSAR_MAX_QUEUE_SIZE || '500', 10);
+    if (currentCount >= maxCapacity) {
+      const error = new Error("Our servers are currently under high load. Please try again in a little while.") as Error & { code?: string; statusCode?: number };
+      error.code = "SERVER_BUSY";
+      error.statusCode = 503;
+      throw error;
+    }
 
-  const currentCount = await getQueueTotalJobs();
-  if (currentCount >= maxCapacity) {
-    const error = new Error("Our servers are currently under high load. Please try again in a little while.") as Error & { code?: string; statusCode?: number };
-    error.code = "SERVER_BUSY";
-    error.statusCode = 503;
-    throw error;
-  }
-
-  const connection = createRedisClient();
-  try {
-    await withTimeout(connection.connect(), 4000, 'Redis connect');
+    // --- Enqueue (reuses same connection) ---
     const queueName = `${jobType}-queue`;
     const requestQueue = new Queue(queueName, { connection });
-
     try {
       const addedJob = await withTimeout(
         requestQueue.add(
@@ -97,6 +85,37 @@ export async function enqueue(job: Job) {
     } finally {
       await safeCloseQueue(requestQueue);
     }
+  } finally {
+    connection.disconnect();
+  }
+}
+
+/**
+ * Checks total number of jobs currently admitted-but-not-completed across queues.
+ * Counts waiting, active, and delayed jobs without loading full job objects.
+ * NOTE: Opens its own connection — only call this from endpoints that don't also enqueue.
+ */
+export async function getQueueTotalJobs(): Promise<number> {
+  const connection = createRedisClient();
+  try {
+    await withTimeout(connection.connect(), 4000, 'Redis connect');
+    let total = 0;
+    for (const qName of KNOWN_QUEUES) {
+      const q = new Queue(qName, { connection });
+      try {
+        const counts = await withTimeout(
+          q.getJobCounts('waiting', 'active', 'delayed'),
+          4000,
+          `BullMQ getJobCounts ${qName}`
+        );
+        total += (counts.waiting || 0) + (counts.active || 0) + (counts.delayed || 0);
+      } catch (e) {
+        console.error(`Error counting jobs for queue ${qName}:`, e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+      } finally {
+        await safeCloseQueue(q);
+      }
+    }
+    return total;
   } finally {
     connection.disconnect();
   }

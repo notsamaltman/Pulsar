@@ -4,20 +4,21 @@ import { getPrisma } from "@/lib/prisma";
 import { withTimeout } from "@/lib/redis";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
-// Configure S3 Client
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION!,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-});
-
 // Helper to sync profile picture to S3.
-// Creates its own per-request Prisma client and closes it in finally.
+// S3Client is created inside the function so it is NOT constructed at module scope
+// (AWS SDK v3 constructor overhead is non-trivial — avoid paying it on cold starts
+// where no image sync is needed).
 async function syncProfileImage(userId: string, currentImage: string | null | undefined) {
   if (currentImage && currentImage.includes("googleusercontent.com")) {
     try {
+      const s3Client = new S3Client({
+        region: process.env.AWS_REGION!,
+        credentials: {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+        },
+      });
+
       const response = await fetch(currentImage);
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
@@ -30,7 +31,7 @@ async function syncProfileImage(userId: string, currentImage: string | null | un
           Key: filename,
           Body: buffer,
           ContentType: "image/png",
-          ACL: "public-read", // Try setting public access
+          ACL: "public-read",
         }));
       } catch (aclError) {
         console.warn(
@@ -46,7 +47,6 @@ async function syncProfileImage(userId: string, currentImage: string | null | un
       }
 
       const s3Url = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${filename}`;
-
       console.log(`Successfully synced image for user ${userId} to ${s3Url}`);
 
       const { prisma, pool } = getPrisma();
@@ -70,7 +70,6 @@ async function syncProfileImage(userId: string, currentImage: string | null | un
 }
 
 export const authOptions: NextAuthOptions = {
-  // PrismaAdapter removed — session strategy is 'jwt', so no DB sessions are written.
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -94,11 +93,50 @@ export const authOptions: NextAuthOptions = {
   },
   callbacks: {
     async jwt({ token, user, account }) {
+      // ----------------------------------------------------------------
+      // Only runs on initial sign-in (account + user are only present then).
+      // Subsequent calls return the cached token immediately — no DB hit.
+      // ----------------------------------------------------------------
       if (account && user) {
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
         token.id = user.id;
 
+        // Fetch tier once at sign-in and store it in the token.
+        const { prisma, pool } = getPrisma();
+        try {
+          const dbUser = await withTimeout(
+            prisma.user.findUnique({
+              where: { id: user.id },
+              select: { email: true, tier: true }
+            }),
+            8000,
+            "JWT sign-in tier lookup"
+          );
+          if (dbUser) {
+            if (dbUser.email === "panwalkarsoham@gmail.com" && dbUser.tier !== "elite") {
+              // Upgrade to elite — fire and forget the update but set the token now.
+              prisma.user.update({
+                where: { id: user.id },
+                data: { tier: "elite" }
+              }).catch((e: unknown) => {
+                console.warn("Elite tier update failed:", e instanceof Error ? e.message : String(e));
+              });
+              token.tier = "elite";
+            } else {
+              token.tier = dbUser.tier || "free";
+            }
+          }
+        } catch (dbError) {
+          console.warn(
+            "Skipping JWT tier lookup:",
+            dbError instanceof Error ? `${dbError.name}: ${dbError.message}` : String(dbError)
+          );
+        } finally {
+          await pool.end();
+        }
+
+        // Profile image sync — only on first sign-in
         try {
           const updatedImage = await Promise.race([
             syncProfileImage(user.id, user.image),
@@ -116,44 +154,7 @@ export const authOptions: NextAuthOptions = {
         }
       }
 
-      // Always fetch latest tier from DB or check admin email
-      if (token.id) {
-        const { prisma, pool } = getPrisma();
-        try {
-          const dbUser = await withTimeout(
-            prisma.user.findUnique({
-              where: { id: token.id as string },
-              select: { email: true, tier: true }
-            }),
-            8000,
-            "JWT user lookup"
-          );
-          if (dbUser) {
-            if (dbUser.email === "panwalkarsoham@gmail.com" && dbUser.tier !== "elite") {
-              const { prisma: p2, pool: pl2 } = getPrisma();
-              try {
-                await p2.user.update({
-                  where: { id: token.id as string },
-                  data: { tier: "elite" }
-                });
-              } finally {
-                await pl2.end();
-              }
-              token.tier = "elite";
-            } else {
-              token.tier = dbUser.tier || "free";
-            }
-          }
-        } catch (dbError) {
-          console.warn(
-            "Skipping JWT tier lookup:",
-            dbError instanceof Error ? `${dbError.name}: ${dbError.message}` : String(dbError)
-          );
-        } finally {
-          await pool.end();
-        }
-      }
-
+      // Subsequent requests: token already has id and tier — return immediately.
       return token;
     },
     async session({ session, token }) {
