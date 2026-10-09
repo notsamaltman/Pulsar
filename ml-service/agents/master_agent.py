@@ -20,7 +20,7 @@ from typing import Dict, Any, List, Optional
 import bullmq
 from bullmq import Queue
 from dotenv import load_dotenv
-from utils.llm import GroqQuotaExhaustedError, looks_like_groq_limit
+from utils.llm import GroqQuotaExhaustedError, looks_like_groq_limit, looks_like_groq_message_too_large
 
 # --- Ensure parent is on path for utils imports ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -367,7 +367,7 @@ def _run_youtube(payload: Dict[str, Any]) -> Dict[str, Any]:
     except GroqQuotaExhaustedError:
         raise
     except Exception as e:
-        if looks_like_groq_limit(e):
+        if looks_like_groq_limit(e) and not looks_like_groq_message_too_large(e):
             raise
         print(f"[MasterAgent] ✗ YouTube agent error: {e}")
         traceback.print_exc()
@@ -394,7 +394,7 @@ def _run_producthunt(payload: Dict[str, Any]) -> Dict[str, Any]:
     except GroqQuotaExhaustedError:
         raise
     except Exception as e:
-        if looks_like_groq_limit(e):
+        if looks_like_groq_limit(e) and not looks_like_groq_message_too_large(e):
             raise
         print(f"[MasterAgent] ✗ ProductHunt agent error: {e}")
         traceback.print_exc()
@@ -508,7 +508,7 @@ class MasterAgent:
                 except GroqQuotaExhaustedError:
                     raise
                 except Exception as e:
-                    if looks_like_groq_limit(e):
+                    if looks_like_groq_limit(e) and not looks_like_groq_message_too_large(e):
                         raise GroqQuotaExhaustedError(
                             reset_at=time.time() + 900,
                             message=str(e),

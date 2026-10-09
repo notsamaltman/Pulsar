@@ -180,7 +180,11 @@ def get_key_balancer() -> GroqKeyBalancer:
     return _key_balancer
 
 def looks_like_groq_limit(err: Any) -> bool:
-    """True when an exception or message indicates Groq 429 / quota exhaustion."""
+    """True when an exception indicates a Groq **429 rate-limit / quota exhaustion**.
+
+    Deliberately returns False for 413 "request too large" errors — those mean
+    the prompt needs to be truncated, not that the API key is exhausted.
+    """
     if isinstance(err, GroqQuotaExhaustedError):
         return True
     err_str = str(err).lower() if err is not None else ""
@@ -189,11 +193,33 @@ def looks_like_groq_limit(err: Any) -> bool:
     # YouTube Data API quota errors are not Groq
     if "quotaexceeded" in err_str.replace(" ", "") and "groq" not in err_str:
         return False
+    # 413 "request too large" / token-count errors — NOT a quota exhaustion.
+    # The error has code='rate_limit_exceeded' but HTTP status 413 and message
+    # mentions "request too large" or "tokens per minute" with a size complaint.
+    if "413" in err_str or "request too large" in err_str:
+        return False
+    if "requested" in err_str and "limit" in err_str and "reduce your message" in err_str:
+        return False
     if "429" in err_str or "rate limit" in err_str:
         return True
     if "quota" in err_str and "groq" in err_str:
         return True
     return "groq" in err_str and ("limit" in err_str or "exhausted" in err_str)
+
+
+def looks_like_groq_message_too_large(err: Any) -> bool:
+    """True when a Groq error is HTTP 413 — prompt exceeds the model's token limit.
+
+    This is a caller bug (prompt too long), not an API quota issue.
+    The job should NOT be requeued; the caller should truncate the prompt.
+    """
+    err_str = str(err).lower() if err is not None else ""
+    if "413" in err_str or "request too large" in err_str:
+        return True
+    # Groq returns code='rate_limit_exceeded' even for 413, so check the message body
+    if "requested" in err_str and "reduce your message size" in err_str:
+        return True
+    return False
 
 def parse_groq_retry_after_seconds(err_str: str, default: int = 900) -> int:
     """Parse 'try again in 15m' style hints from Groq error strings."""
@@ -327,16 +353,20 @@ def invoke_groq_json(prompt: str, model_name: Optional[str] = None, temperature:
     Respects Redis rate-limit status and raises GroqQuotaExhaustedError on 429 errors.
     Each attempt picks the next available key from the balancer so a rate-limited
     key is automatically skipped on subsequent attempts.
+
+    413 "request too large" is handled by halving the prompt on each retry
+    rather than marking the key exhausted — it's a caller error, not a quota issue.
     """
     check_groq_availability()
     model = model_name or os.getenv("GROQ_MODEL") or DEFAULT_MODEL
+    current_prompt = prompt
 
     for attempt in range(retries):
         # Resolve key per-attempt so rate-limited keys get skipped automatically
         api_key = get_key_balancer().get_key()
         llm = ChatGroq(model_name=model, api_key=api_key, temperature=temperature)
         try:
-            res = llm.invoke(prompt)
+            res = llm.invoke(current_prompt)
             content = res.content if hasattr(res, "content") else str(res)
             # Find JSON boundaries
             start = content.find("{")
@@ -349,6 +379,13 @@ def invoke_groq_json(prompt: str, model_name: Optional[str] = None, temperature:
         except Exception as e:
             err_str = str(e)
             print(f"[-] Groq LLM JSON attempt {attempt+1}/{retries} failed: {err_str}")
+
+            if looks_like_groq_message_too_large(e):
+                # Prompt too long — truncate by 40% and retry, don't mark key limited
+                old_len = len(current_prompt)
+                current_prompt = current_prompt[:int(old_len * 0.6)]
+                print(f"[!] Groq 413: prompt too large ({old_len} chars). Truncated to {len(current_prompt)} chars, retrying...")
+                continue
 
             if looks_like_groq_limit(e):
                 raise_groq_quota_from_error(e, failed_key=api_key)

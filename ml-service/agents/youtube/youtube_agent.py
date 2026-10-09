@@ -73,15 +73,15 @@ class YouTubeQuotaManager:
         print(f"[QuotaManager] Operation '{operation}' (x{count}) cost {cost} units. Total spent: {self.spent}/{self.budget}")
 
     def mark_exhausted(self, message: str = ""):
-        """Called on a hard 403 quota error — writes state to Redis."""
+        """Called on a hard 403 quota error — writes EXHAUSTED state to Redis (15-min reset)."""
         self._exhausted = True
-        print(f"[QuotaManager] Daily YouTube quota exhausted. Writing state to Redis.")
-        set_platform_quota_exhausted("youtube", message=message)
+        print(f"[QuotaManager] Daily YouTube quota exhausted. Writing state to Redis (15-min reset).")
+        set_platform_quota_exhausted("youtube", message=message, reset_after_seconds=900)
 
     def mark_rate_limited(self, retry_after: int = 600):
-        """Called on a transient 429 — shorter Redis block."""
-        print(f"[QuotaManager] YouTube API rate-limited for ~{retry_after}s. Writing to Redis.")
-        set_platform_quota_rate_limited("youtube", retry_after_seconds=retry_after)
+        """Called on a transient 429 — 15-min Redis block matching quota reset window."""
+        print(f"[QuotaManager] YouTube API rate-limited. Writing 15-min block to Redis.")
+        set_platform_quota_rate_limited("youtube", retry_after_seconds=900)
 
     @property
     def is_exhausted(self) -> bool:
