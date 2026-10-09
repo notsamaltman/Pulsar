@@ -16,7 +16,8 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
   const [progress, setProgress] = useState<{ status: string; message: string } | null>(null);
   const [showResultForm, setShowResultForm] = useState(false);
   const [saving, setSaving] = useState(false);
-  
+  const [failureMessage, setFailureMessage] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     name: "",
     website: "",
@@ -29,6 +30,15 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
     description: "",
     summary: ""
   });
+
+  // Full reset — called after success, failure, or close
+  const resetModal = () => {
+    setLoading(false);
+    setJobId(null);
+    setProgress(null);
+    setShowResultForm(false);
+    setFailureMessage(null);
+  };
 
   // Polling effect
   useEffect(() => {
@@ -49,8 +59,14 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 setShowResultForm(true);
                 clearInterval(interval);
               } else if (job.progress.status === "failed") {
-                alert(job.progress.message || "Job failed");
+                const isInvalidContent = job.progress.message === "Content Invalidated";
+                setFailureMessage(
+                  isInvalidContent
+                    ? "Please be more detailed — Pulsar couldn't identify this as a real company. Try adding a clearer description, full website URL, or more specific business information."
+                    : (job.progress.message || "Job failed. Please try again.")
+                );
                 setLoading(false);
+                setJobId(null); // clear so the next submit starts fresh
                 clearInterval(interval);
               }
             }
@@ -66,6 +82,7 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFailureMessage(null); // clear any previous failure before retrying
     setLoading(true);
     setProgress({ status: "initializing", message: "Queuing Request..." });
 
@@ -84,7 +101,7 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
       setJobId(data.jobId);
     } catch (error) {
       console.error("Error:", error);
-      alert("Failed to create company. Please try again.");
+      setFailureMessage("Failed to create company. Please try again.");
       setLoading(false);
     }
   };
@@ -104,14 +121,11 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
 
       // Reset and close
       setFormData({ name: "", website: "", description: "" });
-      setJobId(null);
-      setProgress(null);
-      setShowResultForm(false);
-      setLoading(false);
+      resetModal();
       onClose();
     } catch (error) {
       console.error("Error saving company:", error);
-      alert("Failed to save. Please try again.");
+      setFailureMessage("Failed to save. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -228,25 +242,39 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 </div>
 
                 {/* Result Actions */}
-                <div className="px-6 sm:px-8 py-4 sm:py-6 bg-[#131313] border-t border-[#2A2A2A] flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <p className="text-[11px] text-[#444444] text-center sm:text-left">
-                    You can refine the AI-generated summary before finalizing the company record.
-                  </p>
-                  <div className="flex gap-4 w-full sm:w-auto justify-end">
-                    <button 
-                      onClick={() => setShowResultForm(false)}
-                      className="text-xs font-bold text-[#666666] hover:text-white transition-colors uppercase tracking-wider px-2"
-                    >
-                      Back
-                    </button>
-                    <button 
-                      disabled={saving}
-                      onClick={handleFinalSave}
-                      className="bg-white text-black px-6 sm:px-8 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center justify-center gap-2 disabled:opacity-50 flex-1 sm:flex-none"
-                    >
-                      {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                      {saving ? "Saving..." : "Confirm & Save"}
-                    </button>
+                <div className="px-6 sm:px-8 py-4 sm:py-6 bg-[#131313] border-t border-[#2A2A2A] flex flex-col gap-3">
+                  {failureMessage && (
+                    <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 flex items-start gap-3">
+                      <span className="text-rose-400 text-sm leading-relaxed">{failureMessage}</span>
+                      <button
+                        type="button"
+                        onClick={() => setFailureMessage(null)}
+                        className="ml-auto text-rose-400/60 hover:text-rose-400 transition-colors shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <p className="text-[11px] text-[#444444] text-center sm:text-left">
+                      You can refine the AI-generated summary before finalizing the company record.
+                    </p>
+                    <div className="flex gap-4 w-full sm:w-auto justify-end">
+                      <button 
+                        onClick={() => setShowResultForm(false)}
+                        className="text-xs font-bold text-[#666666] hover:text-white transition-colors uppercase tracking-wider px-2"
+                      >
+                        Back
+                      </button>
+                      <button 
+                        disabled={saving}
+                        onClick={handleFinalSave}
+                        className="bg-white text-black px-6 sm:px-8 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center justify-center gap-2 disabled:opacity-50 flex-1 sm:flex-none"
+                      >
+                        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                        {saving ? "Saving..." : "Confirm & Save"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -313,6 +341,20 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                       required
                     />
                   </div>
+
+                  {/* Error Banner */}
+                  {failureMessage && (
+                    <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 flex items-start gap-3">
+                      <span className="text-rose-400 text-sm leading-relaxed">{failureMessage}</span>
+                      <button
+                        type="button"
+                        onClick={() => setFailureMessage(null)}
+                        className="ml-auto text-rose-400/60 hover:text-rose-400 transition-colors shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
 
                   {/* Actions */}
                   <div className="pt-6 flex items-center justify-end gap-6">
