@@ -2,14 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { Queue } from "bullmq";
 import { getPrisma } from "@/lib/prisma";
 import { createRedisClient, getGroqStatus, isGroqExhausted, withTimeout } from "@/lib/redis";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
 export async function GET(req: NextRequest) {
   const { prisma, pool } = getPrisma();
   try {
+    const session = await getServerSession(authOptions);
+    // @ts-expect-error session.user is slightly typed differently in nextauth
+    const userId = session?.user?.id;
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const companyId = searchParams.get("companyId");
 
-    const whereClause: any = {};
+    const whereClause: any = { userId };
     if (companyId) {
       whereClause.companyId = companyId;
     }

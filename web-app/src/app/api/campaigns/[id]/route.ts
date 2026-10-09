@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { Queue } from "bullmq";
 import { getPrisma } from "@/lib/prisma";
 import { createRedisClient, withTimeout } from "@/lib/redis";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
 
 export async function GET(
@@ -12,9 +14,16 @@ export async function GET(
   try {
     const { id } = await params;
 
-    // 1. Fetch Campaign & associated leads from Prisma DB
-    const campaign = await prisma.campaign.findUnique({
-      where: { id },
+    const session = await getServerSession(authOptions);
+    // @ts-expect-error session.user is slightly typed differently in nextauth
+    const userId = session?.user?.id;
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // 1. Fetch Campaign & associated leads from Prisma DB (scoped to owner)
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, userId },
       include: {
         campaignLeads: {
           include: {
@@ -92,6 +101,19 @@ export async function DELETE(
 
     if (!id) {
       return NextResponse.json({ error: "Missing campaign ID" }, { status: 400 });
+    }
+
+    const session = await getServerSession(authOptions);
+    // @ts-expect-error session.user is slightly typed differently in nextauth
+    const userId = session?.user?.id;
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Verify ownership before deleting
+    const existing = await prisma.campaign.findFirst({ where: { id, userId } });
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
     // Delete campaign from database

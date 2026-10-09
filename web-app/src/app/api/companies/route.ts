@@ -52,7 +52,15 @@ export async function POST(req: NextRequest) {
 export async function GET() {
   const { prisma, pool } = getPrisma();
   try {
+    const session = await getServerSession(authOptions);
+    // @ts-expect-error session.user is slightly typed differently in nextauth
+    const userId = session?.user?.id;
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const companies = await prisma.company.findMany({
+      where: { userId },
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json(companies);
