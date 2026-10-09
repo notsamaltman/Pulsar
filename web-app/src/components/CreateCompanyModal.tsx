@@ -1,13 +1,19 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Check, Loader2 } from "lucide-react";
+import { X, Check, Loader2, AlertTriangle } from "lucide-react";
 import { useState, useEffect } from "react";
 import { AnimatedButton } from "./Animations";
 
 interface CreateCompanyModalProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+interface GroqStatus {
+  isExhausted: boolean;
+  resetAtLabel?: string;
+  retryAfterSeconds?: number;
 }
 
 export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyModalProps) {
@@ -17,18 +23,19 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
   const [showResultForm, setShowResultForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [failureMessage, setFailureMessage] = useState<string | null>(null);
+  const [groqStatus, setGroqStatus] = useState<GroqStatus | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
     website: "",
-    description: ""
+    description: "",
   });
 
   const [resultData, setResultData] = useState({
     name: "",
     website: "",
     description: "",
-    summary: ""
+    summary: "",
   });
 
   // Full reset — called after success, failure, or close
@@ -40,6 +47,26 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
     setFailureMessage(null);
   };
 
+  // Check Groq status whenever the modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch("/api/service-health")
+      .then((r) => r.json())
+      .then((data) => {
+        const groq = data.groqStatus;
+        if (groq) {
+          setGroqStatus({
+            isExhausted: !!groq.isExhausted,
+            resetAtLabel: groq.resetAtLabel || groq.resetAt,
+            retryAfterSeconds: groq.retryAfterSeconds,
+          });
+        }
+      })
+      .catch(() => {
+        // Non-critical — if health check fails, let the user try anyway
+      });
+  }, [isOpen]);
+
   // Polling effect
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -50,10 +77,10 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
           const response = await fetch(`/api/job/${jobId}`);
           if (response.ok) {
             const job = await response.json();
-            
+
             if (job.progress) {
               setProgress(job.progress);
-              
+
               if (job.progress.status === "completed" && job.progress.result) {
                 setResultData(job.progress.result);
                 setShowResultForm(true);
@@ -62,11 +89,11 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 const isInvalidContent = job.progress.message === "Content Invalidated";
                 setFailureMessage(
                   isInvalidContent
-                    ? "Please be more detailed — Try adding a clearer description, full website URL, or more specific business information."
+                    ? "Please be more detailed — Pulsar couldn't identify this as a real company. Try adding a clearer description, full website URL, or more specific business information."
                     : (job.progress.message || "Job failed. Please try again.")
                 );
                 setLoading(false);
-                setJobId(null); // clear so the next submit starts fresh
+                setJobId(null);
                 clearInterval(interval);
               }
             }
@@ -82,7 +109,7 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFailureMessage(null); // clear any previous failure before retrying
+    setFailureMessage(null);
     setLoading(true);
     setProgress({ status: "initializing", message: "Queuing Request..." });
 
@@ -119,7 +146,6 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
         throw new Error("Failed to save company");
       }
 
-      // Reset and close
       setFormData({ name: "", website: "", description: "" });
       resetModal();
       onClose();
@@ -152,6 +178,7 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
             className="w-full max-w-xl sm:max-w-2xl max-h-[90vh] bg-[#171717] rounded-2xl border border-[#2A2A2A] overflow-y-auto flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.5)] relative z-10"
           >
             {loading && !showResultForm ? (
+              /* ── Loading state ── */
               <div className="flex flex-col items-center justify-center py-12 sm:py-20 px-6 sm:px-10 text-center space-y-6 sm:space-y-10">
                 <div className="relative flex items-center justify-center scale-100 sm:scale-125">
                   <motion.div
@@ -171,12 +198,11 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                   />
                   <div className="absolute w-4 h-4 bg-[#BC66FF] rounded-full shadow-[0_0_15px_rgba(188,102,255,0.8)]" />
                 </div>
-                
                 <div className="space-y-8">
                   <div className="flex flex-col items-center gap-4">
                     <h3 className="text-2xl font-bold text-white tracking-tight">Building Profile</h3>
                     <div className="h-1.5 w-48 bg-white/10 rounded-full overflow-hidden">
-                      <motion.div 
+                      <motion.div
                         className="h-full bg-[#BC66FF]"
                         initial={{ width: "0%" }}
                         animate={{ width: "100%" }}
@@ -195,8 +221,8 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 </div>
               </div>
             ) : showResultForm ? (
+              /* ── Result review form ── */
               <div className="flex flex-col h-full max-h-[85vh]">
-                {/* Result Header */}
                 <div className="px-6 sm:px-8 pt-6 sm:pt-8 pb-3 border-b border-[#2A2A2A] flex justify-between items-start">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-2 mb-0.5">
@@ -210,38 +236,35 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                   </button>
                 </div>
 
-                {/* Result Form */}
                 <div className="px-6 sm:px-8 py-6 sm:py-8 space-y-6 overflow-y-auto min-h-[300px]">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Name</label>
-                      <input 
-                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors" 
+                      <input
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors"
                         value={resultData.name}
                         onChange={(e) => setResultData({ ...resultData, name: e.target.value })}
                       />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Website</label>
-                      <input 
-                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors" 
+                      <input
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors"
                         value={resultData.website}
                         onChange={(e) => setResultData({ ...resultData, website: e.target.value })}
                       />
                     </div>
                   </div>
-
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-[#444444] uppercase tracking-wider">Generated Summary</label>
-                    <textarea 
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors min-h-[180px] sm:min-h-[260px] leading-relaxed resize-none" 
+                    <textarea
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors min-h-[180px] sm:min-h-[260px] leading-relaxed resize-none"
                       value={resultData.summary}
                       onChange={(e) => setResultData({ ...resultData, summary: e.target.value })}
                     />
                   </div>
                 </div>
 
-                {/* Result Actions */}
                 <div className="px-6 sm:px-8 py-4 sm:py-6 bg-[#131313] border-t border-[#2A2A2A] flex flex-col gap-3">
                   {failureMessage && (
                     <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 flex items-start gap-3">
@@ -260,13 +283,13 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                       You can refine the AI-generated summary before finalizing the company record.
                     </p>
                     <div className="flex gap-4 w-full sm:w-auto justify-end">
-                      <button 
+                      <button
                         onClick={() => setShowResultForm(false)}
                         className="text-xs font-bold text-[#666666] hover:text-white transition-colors uppercase tracking-wider px-2"
                       >
                         Back
                       </button>
-                      <button 
+                      <button
                         disabled={saving}
                         onClick={handleFinalSave}
                         className="bg-white text-black px-6 sm:px-8 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#dddddd] transition-all flex items-center justify-center gap-2 disabled:opacity-50 flex-1 sm:flex-none"
@@ -279,16 +302,15 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 </div>
               </div>
             ) : (
+              /* ── Main form ── */
               <>
-                {/* Modal Header */}
                 <div className="px-6 sm:px-8 pt-8 sm:pt-10 pb-4 sm:pb-6 relative">
-                  <button 
+                  <button
                     onClick={onClose}
                     className="absolute top-6 sm:top-8 right-6 sm:right-8 text-[#444444] hover:text-white transition-colors"
                   >
                     <X className="w-5 h-5" />
                   </button>
-                  
                   <div className="flex items-center gap-3 mb-2">
                     <div className="w-6 h-6 flex items-center justify-center overflow-hidden rounded bg-white/10 ring-1 ring-white/20">
                       <img src="/favicon.ico" className="w-4 h-4 object-contain brightness-0 invert" alt="Pulsar" />
@@ -301,48 +323,72 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                   </p>
                 </div>
 
-                {/* Form Section */}
+                {/* Groq quota exhausted banner — blocks form submission */}
+                {groqStatus?.isExhausted && (
+                  <div className="mx-6 sm:mx-8 mb-2 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start justify-between gap-3 text-amber-300">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-amber-200">AI Engine Temporarily Unavailable</p>
+                        <p className="text-xs text-amber-300/80 mt-0.5">
+                          The AI API limit has been reached. Company builds are paused until it resets
+                          {groqStatus.resetAtLabel ? (
+                            <> around <strong className="text-amber-100">{groqStatus.resetAtLabel}</strong></>
+                          ) : " shortly"}.
+                        </p>
+                      </div>
+                    </div>
+                    {groqStatus.retryAfterSeconds && (
+                      <span className="text-xs font-mono font-bold bg-amber-500/20 px-3 py-1 rounded-md border border-amber-500/30 shrink-0">
+                        ~{Math.ceil(groqStatus.retryAfterSeconds / 60)}m left
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 <form className="px-6 sm:px-8 pb-8 sm:pb-10 space-y-5 sm:space-y-6" onSubmit={handleSubmit}>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Company Name</label>
-                      <input 
-                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white placeholder-[#333333] focus:outline-none focus:border-[#444444] transition-colors" 
-                        placeholder="Acme Corporation" 
-                        type="text" 
+                      <input
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white placeholder-[#333333] focus:outline-none focus:border-[#444444] transition-colors disabled:opacity-40"
+                        placeholder="Acme Corporation"
+                        type="text"
                         value={formData.name}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        disabled={!!groqStatus?.isExhausted}
                         required
                       />
                     </div>
-
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Website URL</label>
                         <span className="text-[9px] text-[#222222] uppercase font-black">Optional</span>
                       </div>
-                      <input 
-                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white placeholder-https:// focus:outline-none focus:border-[#444444] transition-colors" 
-                        placeholder="https://acme.com" 
+                      <input
+                        className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#444444] transition-colors disabled:opacity-40"
+                        placeholder="https://acme.com"
                         type="url"
                         value={formData.website}
                         onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                        disabled={!!groqStatus?.isExhausted}
                       />
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Company Description</label>
-                    <textarea 
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-4 text-sm text-white placeholder-Describe... focus:outline-none focus:border-[#444444] transition-colors min-h-[140px] resize-none leading-relaxed" 
-                      placeholder="What is the core focus of your business?" 
+                    <textarea
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-4 text-sm text-white placeholder-Describe... focus:outline-none focus:border-[#444444] transition-colors min-h-[140px] resize-none leading-relaxed disabled:opacity-40"
+                      placeholder="What is the core focus of your business?"
                       value={formData.description}
                       onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      disabled={!!groqStatus?.isExhausted}
                       required
                     />
                   </div>
 
-                  {/* Error Banner */}
+                  {/* Job failure / validation error banner */}
                   {failureMessage && (
                     <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 flex items-start gap-3">
                       <span className="text-rose-400 text-sm leading-relaxed">{failureMessage}</span>
@@ -356,18 +402,18 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                     </div>
                   )}
 
-                  {/* Actions */}
                   <div className="pt-6 flex items-center justify-end gap-6">
-                    <button 
+                    <button
                       type="button"
                       onClick={onClose}
                       className="text-[12px] font-bold text-[#444444] hover:text-white transition-colors uppercase tracking-widest"
                     >
                       Cancel
                     </button>
-                    <AnimatedButton 
+                    <AnimatedButton
                       type="submit"
-                      className="h-12 px-10 rounded-full text-xs font-black uppercase tracking-[0.2em] bg-white text-black hover:bg-[#eeeeee] border-0 shadow-lg shadow-white/5 transition-all"
+                      disabled={!!groqStatus?.isExhausted}
+                      className="h-12 px-10 rounded-full text-xs font-black uppercase tracking-[0.2em] bg-white text-black hover:bg-[#eeeeee] border-0 shadow-lg shadow-white/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
                     >
                       <span>Initialize Build</span>
                     </AnimatedButton>
