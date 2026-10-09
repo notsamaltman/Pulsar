@@ -74,18 +74,18 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
         <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
           {/* Overlay */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{opacity: 0}}
+            animate={{opacity: 1}}
+            exit={{opacity: 0}}
             className="absolute inset-0 bg-background/80 backdrop-blur-md"
             onClick={onClose}
           />
 
           {/* Modal Container */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            initial={{opacity: 0, scale: 0.95, y: 10}}
+            animate={{opacity: 1, scale: 1, y: 0}}
+            exit={{opacity: 0, scale: 0.95, y: 10}}
             className="w-full max-w-4xl max-h-[92vh] flex flex-col relative z-10"
           >
             <button 
@@ -276,7 +276,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 title="Intent Signals" 
                 description="Which behavioral signals indicate a prospect is ready to engage?"
               >
-                <div className="space-y-6 pt-2">
+                <div className="space-y-3 sm:space-y-6 pt-1 sm:pt-2">
                   {errors.intent && (
                     <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-center gap-3">
                       <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
@@ -284,12 +284,12 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     </div>
                   )}
                   
-                  <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-6 space-y-5">
-                    <h4 className="text-sm font-bold text-white uppercase tracking-widest">B2B Intent Signals</h4>
+                  <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-3 sm:p-6 space-y-3 sm:space-y-5">
+                    <h4 className="text-xs sm:text-sm font-bold text-white uppercase tracking-widest">B2B Intent Signals</h4>
                     <div className="space-y-4">
                       {['Recently Raised Funding', 'Actively Hiring for related roles', 'Published content on relevant topics'].map((signal, i) => (
-                        <label key={i} className="flex items-center gap-4 cursor-pointer group">
-                          <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors border ${formData.b2bSignals.includes(signal) ? 'bg-[#BC66FF] border-[#BC66FF]' : 'border-[#444] bg-[#111] group-hover:border-[#BC66FF]'}`}>
+                        <label key={i} className="flex items-center gap-2 sm:gap-4 cursor-pointer group">
+                          <div className={`w-4 h-4 sm:w-5 sm:h-5 rounded shrink-0 flex items-center justify-center transition-colors border ${formData.b2bSignals.includes(signal) ? 'bg-[#BC66FF] border-[#BC66FF]' : 'border-[#444] bg-[#111] group-hover:border-[#BC66FF]'}`}>
                             <input 
                               type="checkbox" 
                               className="opacity-0 absolute" 
@@ -298,21 +298,21 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                             />
                             {formData.b2bSignals.includes(signal) && <div className="w-2 h-2 rounded-[2px] bg-white" />}
                           </div>
-                          <span className={`text-sm transition-colors ${formData.b2bSignals.includes(signal) ? 'text-white font-medium' : 'text-[#888] group-hover:text-white'}`}>{signal}</span>
+                          <span className={`text-xs sm:text-sm transition-colors ${formData.b2bSignals.includes(signal) ? 'text-white font-medium' : 'text-[#888] group-hover:text-white'}`}>{signal}</span>
                         </label>
                       ))}
                     </div>
                   </div>
                   
-                  <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-6 space-y-5">
-                    <h4 className="text-sm font-bold text-white uppercase tracking-widest">Influencer / Creator Signals</h4>
+                  <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-3 sm:p-6 space-y-3 sm:space-y-5">
+                    <h4 className="text-xs sm:text-sm font-bold text-white uppercase tracking-widest">Influencer / Creator Signals</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Min. Engagement Rate</label>
                         <input 
                           value={formData.minEngagement}
                           onChange={e => setFormData({ ...formData, minEngagement: e.target.value })}
-                          className="w-full bg-[#111111] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50" 
+                          className="w-full bg-[#111111] border border-[#2A2A2A] rounded-lg px-3 py-2.5 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50" 
                           placeholder="e.g. 2.5%" 
                         />
                       </div>
@@ -321,7 +321,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                         <input 
                           value={formData.contentType}
                           onChange={e => setFormData({ ...formData, contentType: e.target.value })}
-                          className="w-full bg-[#111111] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50" 
+                          className="w-full bg-[#111111] border border-[#2A2A2A] rounded-lg px-3 py-2.5 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50" 
                           placeholder="e.g. Video, Threads" 
                         />
                       </div>
