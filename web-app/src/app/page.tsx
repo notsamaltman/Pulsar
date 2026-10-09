@@ -299,7 +299,7 @@ export default function Home() {
               {/* Free Tier Card */}
               <AnimatedSection delay={0.1}>
                 <SpotlightCard 
-                  className="p-6 sm:p-8 rounded-2xl sm:rounded-[2rem] flex flex-col h-full bg-surface-container-low/50 border border-white/5 transition-all duration-500 hover:-translate-y-2"
+                  className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] flex flex-col h-full bg-surface-container-low/50 border border-white/5 transition-all duration-500 hover:-translate-y-2"
                   spotlightColor="rgba(255, 255, 255, 0.05)"
                 >
                   <div className="flex items-center justify-between mb-1 sm:mb-2">
@@ -310,18 +310,16 @@ export default function Home() {
                   </div>
                   <p className="text-xs sm:text-sm text-on-surface-variant mb-4 sm:mb-6">Perfect for testing Pulsar&apos;s automated outreach engine.</p>
                   
-                  <div className="flex items-end gap-1 mb-5 sm:mb-8 pb-4 sm:pb-6 border-b border-white/10">
+                  <div className="flex items-end gap-1 mb-3 sm:mb-6 pb-3 sm:pb-5 border-b border-white/10">
                     <span className="text-3xl sm:text-5xl font-bold tracking-tighter text-white">₹0</span>
                     <span className="text-on-surface-variant text-xs sm:text-sm font-medium mb-1">/forever</span>
                   </div>
                   
-                  <div className="space-y-3 sm:space-y-4 mb-6 sm:mb-8 flex-1">
+                  <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6 flex-1">
                     {[
-                      "1 Job Execution / Day",
-                      "1 Company Profile Creation / day",
-                      "1 Master-Agent Campaign Run / day",
-                      "Multi-Platform Sourcing (Instagram, YouTube, Product Hunt)",
-                      "Standard Worker Queue Speed"
+                      "1 campaign run per day",
+                      "Multi-platform sourcing (Instagram, YouTube, Product Hunt)",
+                      "Access to the full campaign builder"
                     ].map((f, j) => (
                       <div key={j} className="text-xs sm:text-sm text-on-surface-variant flex items-center gap-2.5 sm:gap-3">
                         <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-slate-400 shrink-0" />
@@ -331,7 +329,7 @@ export default function Home() {
                   </div>
                   
                   <Link href="/login" className="w-full">
-                    <button className="w-full py-3 sm:py-4 rounded-xl font-semibold text-xs sm:text-base bg-white/5 text-white border border-white/10 hover:bg-white/10 transition-all duration-300">
+                    <button className="w-full py-2.5 sm:py-3 rounded-xl font-semibold text-xs sm:text-base bg-white/5 text-white border border-white/10 hover:bg-white/10 transition-all duration-300">
                       Get Started Free
                     </button>
                   </Link>
@@ -341,7 +339,7 @@ export default function Home() {
               {/* Elite Tier Card */}
               <AnimatedSection delay={0.25}>
                 <SpotlightCard 
-                  className="p-6 sm:p-8 rounded-2xl sm:rounded-[2rem] flex flex-col h-full bg-[#181226] border border-[#BC66FF]/50 shadow-[0_0_40px_rgba(188,102,255,0.15)] relative transition-all duration-500 hover:-translate-y-2 overflow-hidden"
+                  className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] flex flex-col h-full bg-[#181226] border border-[#BC66FF]/50 shadow-[0_0_40px_rgba(188,102,255,0.15)] relative transition-all duration-500 hover:-translate-y-2 overflow-hidden"
                   spotlightColor="rgba(188, 102, 255, 0.2)"
                 >
                   <div className="absolute top-0 right-0 px-3 sm:px-4 py-1 sm:py-1.5 bg-[#BC66FF] text-black text-[10px] sm:text-xs font-extrabold uppercase tracking-wider rounded-bl-[1.2rem] sm:rounded-bl-[1.5rem] rounded-tr-[1.5rem] sm:rounded-tr-[2rem]">
@@ -354,17 +352,15 @@ export default function Home() {
                   </div>
                   <p className="text-xs sm:text-sm text-slate-300 mb-4 sm:mb-6">For growth teams requiring unlimited execution & dedicated support.</p>
                   
-                  <div className="flex items-end gap-1 mb-5 sm:mb-8 pb-4 sm:pb-6 border-b border-white/10">
-                    <span className="text-2xl sm:text-4xl font-bold tracking-tight text-white">Contact Admin</span>
+                  <div className="flex items-end gap-1 mb-3 sm:mb-6 pb-3 sm:pb-5 border-b border-white/10">
+                    <span className="text-2xl sm:text-4xl font-bold tracking-tight text-white">Custom Pricing</span>
                   </div>
                   
-                  <div className="space-y-3 sm:space-y-4 mb-6 sm:mb-8 flex-1">
+                  <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6 flex-1">
                     {[
-                      "Infinite Jobs for Everything",
-                      "Unlimited Company Profile Creations",
-                      "Unlimited Master-Agent Lead Campaigns",
-                      "Priority Execution Queue Processing",
-                      "Direct Admin Access (panwalkarsoham@gmail.com)"
+                      "Unlimited campaign runs",
+                      "Priority execution queue",
+                      "Dedicated support & onboarding"
                     ].map((f, j) => (
                       <div key={j} className="text-xs sm:text-sm text-slate-200 flex items-center gap-2.5 sm:gap-3 font-medium">
                         <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#BC66FF] shrink-0" />
@@ -375,9 +371,9 @@ export default function Home() {
                   
                   <button 
                     onClick={() => setIsContactModalOpen(true)}
-                    className="w-full py-3 sm:py-4 rounded-xl font-bold text-xs sm:text-base bg-[#BC66FF] text-black hover:bg-white shadow-[0_0_25px_rgba(188,102,255,0.4)] transition-all duration-300 flex items-center justify-center gap-2"
+                    className="w-full py-2.5 sm:py-3 rounded-xl font-bold text-xs sm:text-base bg-[#BC66FF] text-black hover:bg-white shadow-[0_0_25px_rgba(188,102,255,0.4)] transition-all duration-300 flex items-center justify-center gap-2"
                   >
-                    <span>Contact Admin</span>
+                    <span>Request Access</span>
                     <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </button>
                 </SpotlightCard>

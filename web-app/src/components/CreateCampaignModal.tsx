@@ -165,13 +165,13 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 title="Campaign Basics" 
                 description="Define the core metadata and objective of this campaign."
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-6 pt-2">
                   <div className="space-y-2 col-span-1">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Campaign Name *</label>
                     <input 
                       value={formData.campaignName}
                       onChange={e => setFormData({ ...formData, campaignName: e.target.value })}
-                      className={`w-full bg-[#1A1A1A] border rounded-lg px-4 py-3 text-sm text-white focus:outline-none transition-colors ${errors.campaignName ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
+                      className={`w-full bg-[#1A1A1A] border rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none transition-colors ${errors.campaignName ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
                       placeholder="e.g. Q3 Founders Outreach" 
                     />
                     {errors.campaignName && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.campaignName}</p>}
@@ -181,7 +181,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <select 
                       value={formData.goalType}
                       onChange={e => setFormData({ ...formData, goalType: e.target.value })}
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
                       <option>Lead Generation</option>
                       <option>Influencer Outreach</option>
                       <option>Partnership</option>
@@ -193,7 +193,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <input 
                       value={formData.industry}
                       onChange={e => setFormData({ ...formData, industry: e.target.value })}
-                      className={`w-full bg-[#1A1A1A] border rounded-lg px-4 py-3 text-sm text-white focus:outline-none transition-colors ${errors.industry ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
+                      className={`w-full bg-[#1A1A1A] border rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none transition-colors ${errors.industry ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
                       placeholder="e.g. SaaS, E-commerce, AI" 
                     />
                     {errors.industry && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.industry}</p>}
@@ -203,7 +203,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <input 
                       value={formData.geoTarget}
                       onChange={e => setFormData({ ...formData, geoTarget: e.target.value })}
-                      className={`w-full bg-[#1A1A1A] border rounded-lg px-4 py-3 text-sm text-white focus:outline-none transition-colors ${errors.geoTarget ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
+                      className={`w-full bg-[#1A1A1A] border rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none transition-colors ${errors.geoTarget ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
                       placeholder="e.g. North America, UK, Global" 
                     />
                     {errors.geoTarget && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.geoTarget}</p>}
@@ -213,7 +213,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <select 
                       value={formData.budget}
                       onChange={e => setFormData({ ...formData, budget: e.target.value })}
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
                       <option>Organic Outreach ($0)</option>
                       <option>Low Budget ($1k - $5k)</option>
                       <option>Medium Budget ($5k - $20k)</option>
@@ -228,13 +228,13 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 title="Audience Definition" 
                 description="Who precisely are we targeting and filtering out?"
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-6 pt-2">
                   <div className="space-y-2 col-span-full">
                     <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Target Profile (Title, Niche, Size) *</label>
                     <input 
                       value={formData.targetProfile}
                       onChange={e => setFormData({ ...formData, targetProfile: e.target.value })}
-                      className={`w-full bg-[#1A1A1A] border rounded-lg px-4 py-3 text-sm text-white focus:outline-none transition-colors ${errors.targetProfile ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
+                      className={`w-full bg-[#1A1A1A] border rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none transition-colors ${errors.targetProfile ? 'border-red-500/50 focus:border-red-500' : 'border-[#2A2A2A] focus:border-[#BC66FF]/50'}`}
                       placeholder="e.g. CTOs at 50-200 employee startups" 
                     />
                     {errors.targetProfile && <p className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.targetProfile}</p>}
@@ -244,7 +244,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <select 
                       value={formData.focus}
                       onChange={e => setFormData({ ...formData, focus: e.target.value })}
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
                       <option>B2B (Business-to-Business)</option>
                       <option>B2C (Business-to-Consumer)</option>
                       <option>Both</option>
@@ -255,7 +255,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <input 
                       value={formData.minFollowers}
                       onChange={e => setFormData({ ...formData, minFollowers: e.target.value })}
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors" 
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors" 
                       placeholder="e.g. 10,000" 
                     />
                   </div>
@@ -264,7 +264,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <textarea 
                       value={formData.exclusions}
                       onChange={e => setFormData({ ...formData, exclusions: e.target.value })}
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors min-h-[80px] resize-none" 
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors min-h-[80px] resize-none" 
                       placeholder="e.g. Reject direct competitors, enterprise companies, users with 'student' in bio" 
                     />
                   </div>
@@ -335,10 +335,10 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 title="Outreach Preferences" 
                 description="Define the execution logistics for engaging the audience."
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-6 pt-2">
                     <div className="flex flex-col gap-2 col-span-full">
                        <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Target Platforms (Restricts Agents &amp; UI Tabs) *</label>
-                       <div className="flex flex-col xs:flex-row gap-3">
+                       <div className="flex flex-col xs:flex-row gap-2 sm:gap-3">
                          {[
                            { id: "youtube", label: "YouTube" },
                            { id: "instagram", label: "Instagram" },
@@ -363,7 +363,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                                    setFormData({ ...formData, platforms: next });
                                  }}
                                />
-                               <div className="w-full py-4 px-3 border border-[#2A2A2A] bg-[#1A1A1A] rounded-lg flex items-center justify-center gap-2.5 text-xs font-bold text-[#666] uppercase tracking-wider hover:border-[#444] peer-checked:border-[#BC66FF] peer-checked:text-[#BC66FF] peer-checked:bg-[#BC66FF]/10 transition-all">
+                               <div className="w-full py-2 px-2 sm:py-4 sm:px-3 border border-[#2A2A2A] bg-[#1A1A1A] rounded-lg flex items-center justify-center gap-2.5 text-xs font-bold text-[#666] uppercase tracking-wider hover:border-[#444] peer-checked:border-[#BC66FF] peer-checked:text-[#BC66FF] peer-checked:bg-[#BC66FF]/10 transition-all">
                                  <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all ${isSelected ? "bg-[#BC66FF] border-[#BC66FF]" : "border-[#444] bg-[#111]"}`}>
                                    {isSelected && (
                                      <svg className="w-2.5 h-2.5 text-black" viewBox="0 0 10 10" fill="none">
@@ -379,12 +379,12 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                        </div>
                     </div>
 
-                    <div className="space-y-3 col-span-full">
+                    <div className="space-y-2 sm:space-y-3 col-span-full">
                     <div className="flex items-center justify-between">
                        <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Preferred Channels *</label>
                        {errors.channels && <span className="text-red-400 text-[10px] uppercase font-bold tracking-wider">{errors.channels}</span>}
                     </div>
-                    <div className="flex flex-col xs:flex-row gap-3">
+                    <div className="flex flex-col xs:flex-row gap-2 sm:gap-3">
                       {['Email', 'LinkedIn InMail', 'Twitter DM'].map((chan, i) => (
                          <label key={i} className="flex-1">
                            <input 
@@ -393,7 +393,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                              checked={formData.channels.includes(chan)}
                              onChange={() => handleCheckbox('channels', chan)}
                            />
-                           <div className="w-full py-4 border border-[#2A2A2A] bg-[#1A1A1A] rounded-lg text-center text-xs font-bold text-[#666] uppercase cursor-pointer hover:border-[#444] peer-checked:border-[#BC66FF] peer-checked:text-[#BC66FF] peer-checked:bg-[#BC66FF]/10 transition-all">
+                           <div className="w-full py-2 sm:py-4 border border-[#2A2A2A] bg-[#1A1A1A] rounded-lg text-center text-xs font-bold text-[#666] uppercase cursor-pointer hover:border-[#444] peer-checked:border-[#BC66FF] peer-checked:text-[#BC66FF] peer-checked:bg-[#BC66FF]/10 transition-all">
                              {chan}
                            </div>
                          </label>
@@ -405,7 +405,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <select 
                       value={formData.tone}
                       onChange={e => setFormData({ ...formData, tone: e.target.value })}
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none">
                       <option>Professional / Formal</option>
                       <option>Casual & Direct</option>
                       <option>Humorous / Witty</option>
@@ -417,7 +417,7 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                     <select 
                       value={formData.sequence}
                       onChange={e => setFormData({ ...formData, sequence: e.target.value })}
-                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none"
+                      className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-sm text-white focus:outline-none focus:border-[#BC66FF]/50 transition-colors appearance-none"
                     >
                       <option>1 Touchpoint (Single message)</option>
                       <option>3 Touchpoints (Standard)</option>
