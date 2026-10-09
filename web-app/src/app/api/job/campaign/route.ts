@@ -14,13 +14,13 @@ export async function POST(req: NextRequest) {
     userId = (session?.user as Record<string, any>)?.id || null;
 
     const body = await req.json();
-    const { 
-      campaignName, 
+    const {
+      campaignName,
       goalType,
-      industry, 
-      geoTarget, 
+      industry,
+      geoTarget,
       budget,
-      targetProfile, 
+      targetProfile,
       focus,
       minFollowers,
       exclusions,
@@ -38,16 +38,12 @@ export async function POST(req: NextRequest) {
       ? platforms
       : (Array.isArray(channels) && channels.length > 0 ? channels : ["youtube", "instagram", "producthunt"]);
 
-    // Basic validation matching the required fields in frontend
     if (!campaignName || !industry || !geoTarget || !targetProfile) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
     // --- 1. TIER-BASED EXECUTION & DAILY LIMIT CHECK ---
-    let priority = 5; // Default normal priority
+    let priority = 5;
     if (userId) {
       const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -56,12 +52,10 @@ export async function POST(req: NextRequest) {
 
       const isEliteTier = user?.tier === "elite" || user?.email === "panwalkarsoham@gmail.com";
 
-      // Priority 1 (High) for Elite users or user's first successful job
       if (isEliteTier || !user?.firstSuccessfulJobAt) {
         priority = 1;
       }
 
-      // If NOT Elite tier, enforce 1 job per day free limit
       if (!isEliteTier) {
         const startOfToday = new Date();
         startOfToday.setUTCHours(0, 0, 0, 0);
@@ -85,7 +79,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Prevent simultaneous double-enqueue race condition
       const locked = await acquireUserJobLock(userId, 30);
       if (!locked) {
         return NextResponse.json(
@@ -100,37 +93,78 @@ export async function POST(req: NextRequest) {
 
     const jobId = uuidv4();
 
-    // Create Campaign record in database first so campaignId FK exists
-    try {
-      await prisma.campaign.create({
-        data: {
-          id: jobId,
-          name: campaignName,
-          goalType: goalType || "Lead Generation",
-          industry,
-          geoTarget,
-          budget: budget || "Organic Outreach",
-          targetProfile,
-          focus: focus || "B2B",
-          minFollowers: minFollowers ? String(minFollowers) : null,
-          exclusions: exclusions || null,
-          b2bSignals: Array.isArray(b2bSignals) ? b2bSignals : [],
-          minEngagement: minEngagement ? String(minEngagement) : null,
-          contentType: contentType || null,
-          channels: Array.isArray(channels) ? channels : [],
-          tone: tone || "Professional",
-          sequence: sequence || "3 Touchpoints",
-          companyId: companyId || null,
-          userId: userId || null,
-          status: "queue",
-          platforms: selectedPlatforms,
-        },
-      });
-      console.log(`[+] Saved Campaign '${campaignName}' (${jobId}) to Prisma database with status 'queue'.`);
-    } catch (dbErr) {
-      console.error("[-] Error saving Campaign to Prisma database:", dbErr instanceof Error ? `${dbErr.name}: ${dbErr.message}` : String(dbErr));
+    // --- 2. ENSURE USER ROW EXISTS (FK guard) ---
+    // NextAuth runs in pure JWT mode with no DB adapter, so it never auto-creates
+    // a row in the `users` table. The `campaigns.userId` column has a FK pointing
+    // at `users.id`, so we must upsert the user before inserting the campaign.
+    // The `Company` model has no such FK (bare String? field), which is why company
+    // creation never hit this error.
+    if (userId) {
+      const sessionUser = session?.user as Record<string, any>;
+      const sessionEmail: string | null = sessionUser?.email ?? null;
+
+      try {
+        // Guard against duplicate-email conflicts: if a row already exists with
+        // this email but a different id (e.g. re-authed with new OAuth subject),
+        // adopt the canonical row's id so the FK is valid.
+        if (sessionEmail) {
+          const existing = await prisma.user.findUnique({
+            where: { email: sessionEmail },
+            select: { id: true }
+          });
+          if (existing && existing.id !== userId) {
+            userId = existing.id;
+          }
+        }
+
+        await prisma.user.upsert({
+          where: { id: userId },
+          update: {},  // row exists — nothing to change
+          create: {
+            id: userId,
+            name: sessionUser?.name ?? null,
+            email: sessionEmail,
+            image: sessionUser?.image ?? null,
+          },
+        });
+      } catch (userErr) {
+        // Non-fatal: log and fall back to no userId so the campaign still saves.
+        console.error(
+          "[-] User upsert warning (falling back to null userId):",
+          userErr instanceof Error ? userErr.message : String(userErr)
+        );
+        userId = null;
+      }
     }
 
+    // --- 3. CREATE CAMPAIGN RECORD ---
+    await prisma.campaign.create({
+      data: {
+        id: jobId,
+        name: campaignName,
+        goalType: goalType || "Lead Generation",
+        industry,
+        geoTarget,
+        budget: budget || "Organic Outreach",
+        targetProfile,
+        focus: focus || "B2B",
+        minFollowers: minFollowers ? String(minFollowers) : null,
+        exclusions: exclusions || null,
+        b2bSignals: Array.isArray(b2bSignals) ? b2bSignals : [],
+        minEngagement: minEngagement ? String(minEngagement) : null,
+        contentType: contentType || null,
+        channels: Array.isArray(channels) ? channels : [],
+        tone: tone || "Professional",
+        sequence: sequence || "3 Touchpoints",
+        companyId: companyId || null,
+        userId: userId || null,
+        status: "queue",
+        platforms: selectedPlatforms,
+      },
+    });
+    console.log(`[+] Saved Campaign '${campaignName}' (${jobId}) to Prisma database.`);
+
+    // --- 4. ENQUEUE ---
     const job = {
       jobId,
       jobType: "master",
@@ -153,9 +187,12 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: unknown) {
     if (userId) {
-      await releaseUserJobLock(userId);
+      await releaseUserJobLock(userId).catch(() => {});
     }
-    console.error("Error enqueuing campaign build job:", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+    console.error(
+      "Error enqueuing campaign build job:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
     const errObj = error as { code?: string; message?: string; statusCode?: number };
 
     if (errObj.code === "SERVER_BUSY") {
