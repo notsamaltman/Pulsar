@@ -477,7 +477,7 @@ class ProductHuntLeadAgent:
         scored_leads = list(state.get("scored_leads", []))
         target = state.get("target_lead_count", 5)
         
-        groq_api_key = os.getenv("GROQ_API_KEY")
+        groq_api_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEY_1")
         llm = None
         if groq_api_key:
             try:

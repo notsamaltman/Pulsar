@@ -591,7 +591,7 @@ class YouTubeLeadAgent:
             leads = sorted(leads, key=lambda x: (x.get("subscriber_count", 0), x.get("avg_views", 0)), reverse=True)[:max_candidates]
             print(f"[Node 5: LLM Score] Capped candidates to top {len(leads)} leads for LLM validation.")
 
-        groq_api_key = os.getenv("GROQ_API_KEY")
+        groq_api_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEY_1")
         llm = None
         if groq_api_key:
             try:
