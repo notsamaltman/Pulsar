@@ -139,12 +139,17 @@ export async function POST(req: NextRequest) {
         // Guard against duplicate-email conflicts: if a row already exists with
         // this email but a different id (e.g. re-authed with new OAuth subject),
         // adopt the canonical row's id so the FK is valid.
+        // Note: the JWT callback now also resolves this at sign-in, so this
+        // should rarely trigger — it's a safety net for existing mismatched rows.
         if (sessionEmail) {
           const existing = await prisma.user.findUnique({
             where: { email: sessionEmail },
             select: { id: true }
           });
           if (existing && existing.id !== userId) {
+            console.warn(
+              `[campaign] userId mismatch for ${sessionEmail}: JWT has ${userId}, DB has ${existing.id}. Adopting DB id.`
+            );
             userId = existing.id;
           }
         }

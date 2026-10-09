@@ -100,38 +100,70 @@ export const authOptions: NextAuthOptions = {
       if (account && user) {
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
-        token.id = user.id;
 
         // Fetch tier once at sign-in and store it in the token.
+        // Also resolve the canonical DB user id: if a row already exists
+        // with this email but a different id (re-auth / id mismatch), adopt
+        // the canonical id so session.user.id always matches campaigns.userId.
         const { prisma, pool } = getPrisma();
         try {
           const dbUser = await withTimeout(
             prisma.user.findUnique({
               where: { id: user.id },
-              select: { email: true, tier: true }
+              select: { id: true, email: true, tier: true }
             }),
             8000,
-            "JWT sign-in tier lookup"
+            "JWT sign-in user lookup"
           );
-          if (dbUser) {
-            if (dbUser.email === "panwalkarsoham@gmail.com" && dbUser.tier !== "elite") {
-              // Upgrade to elite — fire and forget the update but set the token now.
+
+          // Check for email-based canonical id mismatch
+          let canonicalId = user.id;
+          if (!dbUser && user.email) {
+            const byEmail = await withTimeout(
+              prisma.user.findUnique({
+                where: { email: user.email },
+                select: { id: true, tier: true }
+              }),
+              8000,
+              "JWT sign-in email lookup"
+            );
+            if (byEmail) {
+              canonicalId = byEmail.id;
+              token.tier = byEmail.tier || "free";
+            }
+          }
+
+          token.id = canonicalId;
+
+          const resolvedUser = dbUser ?? (canonicalId !== user.id ? await withTimeout(
+            prisma.user.findUnique({ where: { id: canonicalId }, select: { email: true, tier: true } }),
+            8000,
+            "JWT sign-in resolved user"
+          ) : null);
+
+          if (resolvedUser) {
+            if (resolvedUser.email === "panwalkarsoham@gmail.com" && resolvedUser.tier !== "elite") {
               prisma.user.update({
-                where: { id: user.id },
+                where: { id: canonicalId },
                 data: { tier: "elite" }
               }).catch((e: unknown) => {
                 console.warn("Elite tier update failed:", e instanceof Error ? e.message : String(e));
               });
               token.tier = "elite";
             } else {
-              token.tier = dbUser.tier || "free";
+              token.tier = resolvedUser.tier || "free";
             }
+          } else {
+            // No DB row yet — will be created on first campaign enqueue
+            token.id = user.id;
+            token.tier = "free";
           }
         } catch (dbError) {
           console.warn(
-            "Skipping JWT tier lookup:",
+            "Skipping JWT user/tier lookup:",
             dbError instanceof Error ? `${dbError.name}: ${dbError.message}` : String(dbError)
           );
+          token.id = user.id;
         } finally {
           await pool.end();
         }
