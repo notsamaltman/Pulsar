@@ -4,13 +4,23 @@ import React, { createContext, useContext, useEffect, useRef, useState } from "r
 import { AnimatePresence, motion } from "framer-motion";
 import { Zap } from "lucide-react";
 
+export interface PlatformQuota {
+  platform: string;
+  status: "AVAILABLE" | "EXHAUSTED" | "RATE_LIMITED";
+  resetAt: number | null;
+  message?: string;
+  available: boolean;
+}
+
 interface ServiceHealthContextType {
   isOffline: boolean;
+  platformQuotas: Record<string, PlatformQuota>;
   checkHealth: () => Promise<void>;
 }
 
 const ServiceHealthContext = createContext<ServiceHealthContextType>({
   isOffline: false,
+  platformQuotas: {},
   checkHealth: async () => {},
 });
 
@@ -18,6 +28,7 @@ export const useServiceHealth = () => useContext(ServiceHealthContext);
 
 export function ServiceHealthProvider({ children }: { children: React.ReactNode }) {
   const [isOffline, setIsOffline] = useState(false);
+  const [platformQuotas, setPlatformQuotas] = useState<Record<string, PlatformQuota>>({});
   const [toast, setToast] = useState<{ title: string; body: string } | null>(null);
   const lastToastKey = useRef<string | null>(null);
 
@@ -35,6 +46,10 @@ export function ServiceHealthProvider({ children }: { children: React.ReactNode 
           setIsOffline(false);
         } else {
           setIsOffline(true);
+        }
+
+        if (data.platformQuotas) {
+          setPlatformQuotas(data.platformQuotas);
         }
 
         const groq = data.groqStatus;
@@ -72,7 +87,7 @@ export function ServiceHealthProvider({ children }: { children: React.ReactNode 
   }, [toast]);
 
   return (
-    <ServiceHealthContext.Provider value={{ isOffline, checkHealth }}>
+    <ServiceHealthContext.Provider value={{ isOffline, platformQuotas, checkHealth }}>
       {children}
       <AnimatePresence>
         {toast && (

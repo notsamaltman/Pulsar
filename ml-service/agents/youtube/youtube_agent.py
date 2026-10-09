@@ -26,6 +26,7 @@ except ImportError:
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
 from utils.llm import get_groq_llm, GroqQuotaExhaustedError, check_groq_availability, looks_like_groq_limit, raise_groq_quota_from_error
+from utils.platform_quota import set_platform_quota_exhausted, set_platform_quota_rate_limited
 
 
 # ==========================================
@@ -34,23 +35,35 @@ from utils.llm import get_groq_llm, GroqQuotaExhaustedError, check_groq_availabi
 class YouTubeQuotaManager:
     """
     Tracks daily YouTube Data API v3 quota spend per agent execution.
-    - search: 100 units
+    - search: 100 units  ← most expensive, minimise these
     - channels.list: 1 unit per request (up to 50 channels batch)
     - videos.list: 1 unit per request (up to 50 videos batch)
     - commentThreads.list: 1 unit per request
+
+    Optimisation notes
+    ------------------
+    * Keep keyword searches to ≤ 3 per run (300 units total).
+    * Batch channel detail fetches at 50 per call.
+    * Use videos.list (1 unit per 50 videos) instead of search per channel.
+    * Avoid get_recent_videos() for channels already in the DB.
+    * When quota is gone, write EXHAUSTED state to Redis so the frontend
+      can block new campaign jobs until the next day's quota window opens.
     """
     COSTS = {
         'search': 100,
         'channels.list': 1,
         'videos.list': 1,
-        'commentThreads.list': 1
+        'commentThreads.list': 1,
     }
 
     def __init__(self, daily_budget: int = 5000):
         self.budget = daily_budget
         self.spent = 0
+        self._exhausted = False   # set to True on a hard 403 quota error
 
     def can_afford(self, operation: str, count: int = 1) -> bool:
+        if self._exhausted:
+            return False
         cost = self.COSTS.get(operation, 1) * count
         return (self.spent + cost) <= self.budget
 
@@ -58,6 +71,21 @@ class YouTubeQuotaManager:
         cost = self.COSTS.get(operation, 1) * count
         self.spent += cost
         print(f"[QuotaManager] Operation '{operation}' (x{count}) cost {cost} units. Total spent: {self.spent}/{self.budget}")
+
+    def mark_exhausted(self, message: str = ""):
+        """Called on a hard 403 quota error — writes state to Redis."""
+        self._exhausted = True
+        print(f"[QuotaManager] Daily YouTube quota exhausted. Writing state to Redis.")
+        set_platform_quota_exhausted("youtube", message=message)
+
+    def mark_rate_limited(self, retry_after: int = 600):
+        """Called on a transient 429 — shorter Redis block."""
+        print(f"[QuotaManager] YouTube API rate-limited for ~{retry_after}s. Writing to Redis.")
+        set_platform_quota_rate_limited("youtube", retry_after_seconds=retry_after)
+
+    @property
+    def is_exhausted(self) -> bool:
+        return self._exhausted
 
 
 # ==========================================
@@ -120,22 +148,31 @@ class YouTubeAPIClient:
 
     def _execute_with_retry(self, request_obj, retries: int = 3, delay: float = 10.0):
         """
-        Executes a YouTube API request with automatic 10-second pause retries (up to 3 times)
-        if rate limits or quota errors are encountered.
+        Executes a YouTube API request with automatic retries.
+        - 429 / transient 403 → sleep and retry (up to `retries` times)
+        - Hard 403 quota exhaustion → mark quota, raise immediately (no retry)
         """
         for attempt in range(retries + 1):
             try:
                 return request_obj.execute()
             except HttpError as e:
-                is_rate_limit = False
-                status_code = getattr(e.resp, 'status', None)
-                if status_code in (429, 403):
-                    is_rate_limit = True
-                elif "quota" in str(e).lower() or "ratelimit" in str(e).lower():
-                    is_rate_limit = True
+                status_code = int(getattr(e.resp, 'status', 0))
+                err_str = str(e).lower()
+                is_hard_quota = (
+                    status_code == 403
+                    and ("quotaexceeded" in err_str.replace(" ", "") or "dailylimitexceeded" in err_str)
+                )
+                is_rate_limit = status_code == 429 or (
+                    status_code == 403 and not is_hard_quota and "rate" in err_str
+                )
+
+                if is_hard_quota:
+                    self.quota.mark_exhausted(str(e))
+                    raise e  # surface immediately, no retry
 
                 if is_rate_limit and attempt < retries:
-                    print(f"[YouTubeAPI] Rate limit/quota hit ({e}). Sleeping {delay}s (Attempt {attempt+1}/{retries})...")
+                    print(f"[YouTubeAPI] Rate limit hit ({e}). Sleeping {delay}s (Attempt {attempt+1}/{retries})...")
+                    self.quota.mark_rate_limited(retry_after=int(delay * (attempt + 1)))
                     time.sleep(delay)
                 else:
                     raise e
@@ -159,7 +196,7 @@ class YouTubeAPIClient:
                 'type': 'channel',
                 'part': 'snippet',
                 'maxResults': min(max_results, 50),
-                'relevanceLanguage': 'en'
+                'relevanceLanguage': 'en',
             }
             if geo_country and len(geo_country) == 2:
                 kwargs['regionCode'] = geo_country.upper()
@@ -168,22 +205,35 @@ class YouTubeAPIClient:
             response = self._execute_with_retry(req)
             self.quota.record_spend('search')
 
-            channel_ids = [item['snippet']['channelId'] for item in response.get('items', []) if 'snippet' in item and 'channelId' in item['snippet']]
+            channel_ids = [
+                item['snippet']['channelId']
+                for item in response.get('items', [])
+                if 'snippet' in item and 'channelId' in item['snippet']
+            ]
             print(f"[YouTubeAPI] Keyword search '{keyword}' found {len(channel_ids)} channels.")
             return channel_ids
+        except HttpError as e:
+            if self.quota.is_exhausted:
+                print(f"[YouTubeAPI] Quota exhausted — skipping remaining searches.")
+            else:
+                print(f"[-] Error searching channels for keyword '{keyword}': {e}")
+            return []
         except Exception as e:
             print(f"[-] Error searching channels for keyword '{keyword}': {e}")
             return []
 
     # --- Step 2: Batch Channel Details (up to 50 per request) ---
     def get_channel_details(self, channel_ids: List[str]) -> List[Dict[str, Any]]:
-        """Batch fetches channel details (50 per call) with rate limit retries."""
+        """Batch fetches channel details (50 per call) with rate limit retries.
+        Also captures the uploads playlist ID to avoid expensive search calls later."""
         if not channel_ids:
             return []
 
         results = []
         chunk_size = 50
         for i in range(0, len(channel_ids), chunk_size):
+            if self.quota.is_exhausted:
+                break
             chunk = channel_ids[i:i + chunk_size]
             if not self.quota.can_afford('channels.list'):
                 print("[YouTubeAPI] Quota budget exhausted during channel details fetch.")
@@ -192,7 +242,7 @@ class YouTubeAPIClient:
             try:
                 req = self.youtube.channels().list(
                     id=','.join(chunk),
-                    part='snippet,statistics,contentDetails,brandingSettings'
+                    part='snippet,statistics,contentDetails,brandingSettings',
                 )
                 response = self._execute_with_retry(req)
                 self.quota.record_spend('channels.list')
@@ -201,8 +251,13 @@ class YouTubeAPIClient:
                     snippet = ch.get('snippet', {})
                     stats = ch.get('statistics', {})
                     branding = ch.get('brandingSettings', {}).get('channel', {})
+                    content = ch.get('contentDetails', {})
 
                     country = snippet.get('country') or branding.get('country') or ''
+                    # uploads playlist id lets us avoid search calls per channel
+                    uploads_playlist_id = (
+                        content.get('relatedPlaylists', {}).get('uploads') or ''
+                    )
 
                     results.append({
                         'channel_id': ch['id'],
@@ -213,48 +268,95 @@ class YouTubeAPIClient:
                         'video_count': int(stats.get('videoCount', 0)),
                         'view_count': int(stats.get('viewCount', 0)),
                         'custom_url': snippet.get('customUrl', ''),
-                        'published_at': snippet.get('publishedAt', '')
+                        'published_at': snippet.get('publishedAt', ''),
+                        'uploads_playlist_id': uploads_playlist_id,
                     })
             except Exception as e:
+                if self.quota.is_exhausted:
+                    break
                 print(f"[-] Error fetching channel details batch: {e}")
                 continue
 
         return results
 
-    # --- Step 3: Fetch Recent Videos & Engagement ---
-    def get_recent_videos(self, channel_id: str, max_results: int = 10) -> List[Dict[str, Any]]:
-        """Fetches recent videos for engagement rate & sponsorship detection with rate limit retries."""
-        if not self.quota.can_afford('search'):
+    # --- Step 3: Fetch Recent Videos & Engagement (quota-efficient) ---
+    def get_recent_videos(self, channel_id: str, uploads_playlist_id: Optional[str] = None, max_results: int = 10) -> List[Dict[str, Any]]:
+        """
+        Fetches recent videos for engagement rate & sponsorship detection.
+
+        Optimised path (0 search units):
+          1. Use playlistItems.list on the channel's uploads playlist (1 unit per 50 items).
+          2. Then videos.list for stats (1 unit per 50 videos).
+          Total cost: 2 units vs the old 101 units (search + videos.list).
+
+        Falls back to the old search-based approach only when the uploads
+        playlist ID is unknown and we can't get it from channel details.
+        """
+        if self.quota.is_exhausted:
             return []
 
+        video_ids: List[str] = []
+
+        # ── Optimised: playlistItems (1 unit) ────────────────────────────
+        if uploads_playlist_id and self.quota.can_afford('videos.list'):
+            try:
+                req_pl = self.youtube.playlistItems().list(
+                    playlistId=uploads_playlist_id,
+                    part='contentDetails',
+                    maxResults=min(max_results, 50),
+                )
+                pl_res = self._execute_with_retry(req_pl)
+                self.quota.record_spend('videos.list')  # playlistItems costs 1 unit
+                video_ids = [
+                    item['contentDetails']['videoId']
+                    for item in pl_res.get('items', [])
+                    if item.get('contentDetails', {}).get('videoId')
+                ]
+            except Exception as e:
+                if self.quota.is_exhausted:
+                    return []
+                print(f"[-] playlistItems fallback for {channel_id}: {e}")
+
+        # ── Legacy fallback: search (100 units) — only if no playlist id ─
+        if not video_ids and self.quota.can_afford('search'):
+            try:
+                req_search = self.youtube.search().list(
+                    channelId=channel_id,
+                    type='video',
+                    part='snippet',
+                    order='date',
+                    maxResults=max_results,
+                )
+                search_res = self._execute_with_retry(req_search)
+                self.quota.record_spend('search')
+                video_ids = [
+                    item['id']['videoId']
+                    for item in search_res.get('items', [])
+                    if item.get('id', {}).get('videoId')
+                ]
+            except Exception as e:
+                if self.quota.is_exhausted:
+                    return []
+                print(f"[-] Search fallback for recent videos of {channel_id}: {e}")
+
+        if not video_ids:
+            return []
+
+        # ── Fetch stats for all video IDs (1 unit per 50) ────────────────
+        if not self.quota.can_afford('videos.list'):
+            return []
         try:
-            req_search = self.youtube.search().list(
-                channelId=channel_id,
-                type='video',
-                part='snippet',
-                order='date',
-                maxResults=max_results
-            )
-            search_res = self._execute_with_retry(req_search)
-            self.quota.record_spend('search')
-
-            video_ids = [item['id']['videoId'] for item in search_res.get('items', []) if item.get('id', {}).get('videoId')]
-            if not video_ids:
-                return []
-
-            if not self.quota.can_afford('videos.list'):
-                return []
-
             req_stats = self.youtube.videos().list(
-                id=','.join(video_ids),
-                part='statistics,snippet'
+                id=','.join(video_ids[:50]),
+                part='statistics,snippet',
             )
             stats_res = self._execute_with_retry(req_stats)
             self.quota.record_spend('videos.list')
-
             return stats_res.get('items', [])
         except Exception as e:
-            print(f"[-] Error fetching recent videos for channel {channel_id}: {e}")
+            if self.quota.is_exhausted:
+                return []
+            print(f"[-] Error fetching video stats for {channel_id}: {e}")
             return []
 
     # --- Strategy 2: Competitor Comment Mining for B2B Buyer Leads ---
@@ -386,6 +488,7 @@ class YouTubeAgentState(TypedDict):
     raw_channels: List[Dict[str, Any]]
     filtered_channels: List[Dict[str, Any]]
     comment_leads: List[Dict[str, Any]]
+    db_leads: List[Dict[str, Any]]          # leads returned from DB cache
     enriched_leads: List[Dict[str, Any]]
     staged_leads: List[Dict[str, Any]]
     error: Optional[str]
@@ -432,6 +535,7 @@ class YouTubeLeadAgent:
             "raw_channels": [],
             "filtered_channels": [],
             "comment_leads": [],
+            "db_leads": [],
             "enriched_leads": [],
             "staged_leads": [],
             "error": None
@@ -439,30 +543,73 @@ class YouTubeLeadAgent:
 
         return self.graph.invoke(state_input)
 
-    # --- Node 1: Discover Channels & Video Comments ---
+    # --- Node 1: Discover Channels (DB-first, then API) ---
     def node_discover(self, state: YouTubeAgentState) -> Dict[str, Any]:
         print("[Node 1: Discover] Executing discovery strategies...")
         strategy = state.get("search_strategy", {})
         icp = state.get("icp", {})
-        channel_ids = set(strategy.get("seed_channels", []))
-        comment_leads = []
+        campaign_id = state.get("campaign_id")
+        channel_ids: Set[str] = set(strategy.get("seed_channels", []))
+        comment_leads: List[Dict[str, Any]] = []
 
-        # 1. Keyword search strategy
-        keywords = strategy.get("keywords", [])
+        # ── DB-first: serve from cache when quota is tight ────────────────
+        niche_str = " ".join(icp.get("niche", [])) if isinstance(icp.get("niche"), list) else (icp.get("niche") or "")
+        target_count = state.get("icp", {}).get("target_lead_count", 10)
+        geo_target = icp.get("geo_country") or ""
+
+        db_leads = search_existing_leads_by_niche_sync(
+            icp=icp,
+            niche=niche_str,
+            limit=target_count * 2,
+            geo_target=geo_target,
+            platform="youtube",
+            campaign_id=campaign_id,
+        )
+        print(f"[Node 1: Discover] DB cache returned {len(db_leads)} existing YouTube leads.")
+
+        # If we already have enough leads from DB, skip expensive API searches
+        if len(db_leads) >= target_count:
+            print("[Node 1: Discover] DB cache satisfied target — skipping YouTube API searches.")
+            return {
+                "discovered_channel_ids": [],
+                "comment_leads": [],
+                "db_leads": db_leads,
+            }
+
+        # ── Keyword deduplication (avoid paying 100 units twice for similar terms) ──
+        keywords: List[str] = strategy.get("keywords", [])
         if not keywords and isinstance(icp.get("niche"), list):
             keywords = icp["niche"]
         elif not keywords and isinstance(icp.get("niche"), str):
             keywords = [icp["niche"]]
 
+        # Deduplicate: skip keywords that are pure substrings of another keyword
+        def _dedupe_keywords(kws: List[str]) -> List[str]:
+            out, seen_lower = [], set()
+            for kw in kws:
+                kl = kw.lower().strip()
+                if kl and kl not in seen_lower:
+                    # Skip if this kw is fully contained in an already-chosen one
+                    if not any(kl in s for s in seen_lower):
+                        seen_lower.add(kl)
+                        out.append(kw)
+            return out
+
+        keywords = _dedupe_keywords(keywords)
         geo_country = icp.get("geo_country")
 
-        for kw in keywords[:3]: # limit searches to conserve quota
+        # Cap to 3 keyword searches = 300 units max
+        for kw in keywords[:3]:
+            if self.quota.is_exhausted:
+                print("[Node 1: Discover] Quota exhausted mid-search — stopping.")
+                break
             found = self.api_client.search_channels(keyword=kw, max_results=50, geo_country=geo_country)
             channel_ids.update(found)
 
-        # 2. Competitor Video Comment Mining strategy
-        competitor_videos = strategy.get("competitor_videos", [])
-        for vid in competitor_videos[:3]:
+        # ── Competitor comment mining ─────────────────────────────────────
+        for vid in strategy.get("competitor_videos", [])[:2]:
+            if self.quota.is_exhausted:
+                break
             mined = self.api_client.mine_comments_for_leads(video_id=vid, max_results=100)
             comment_leads.extend(mined)
             for item in mined:
@@ -472,7 +619,8 @@ class YouTubeLeadAgent:
         print(f"[Node 1: Discover] Total unique channels discovered: {len(channel_ids)}")
         return {
             "discovered_channel_ids": list(channel_ids),
-            "comment_leads": comment_leads
+            "comment_leads": comment_leads,
+            "db_leads": db_leads,
         }
 
     # --- Node 2: Batch Fetch Channel Details ---
@@ -521,8 +669,16 @@ class YouTubeLeadAgent:
         print(f"[Node 4: Enrich Videos] Enriching engagement & sponsorship history for {len(channels)} channels...")
 
         for ch in channels:
+            if self.quota.is_exhausted:
+                print("[Node 4: Enrich Videos] Quota exhausted — stopping enrichment early.")
+                break
+
             cid = ch["channel_id"]
-            recent_vids = self.api_client.get_recent_videos(cid, max_results=10)
+            uploads_playlist_id = ch.get("uploads_playlist_id") or None
+            # Optimised: use playlist ID to avoid 100-unit search calls
+            recent_vids = self.api_client.get_recent_videos(
+                cid, uploads_playlist_id=uploads_playlist_id, max_results=10
+            )
             engagement = compute_youtube_engagement(recent_vids)
             sponsorship = detect_sponsorship_history(recent_vids)
 
@@ -694,6 +850,7 @@ class YouTubeLeadAgent:
     # --- Node 6: Database Persistence ---
     def node_persist(self, state: YouTubeAgentState) -> Dict[str, Any]:
         staged = state.get("staged_leads", [])
+        db_leads = state.get("db_leads", [])
         campaign_id = state.get("campaign_id")
         icp = state.get("icp", {})
         niche = ""
@@ -702,11 +859,29 @@ class YouTubeLeadAgent:
         elif isinstance(icp.get("niche"), str):
             niche = icp["niche"]
 
+        # Merge DB cache leads: add any that aren't already in staged (by username/channel_id)
+        staged_ids = {
+            (l.get("channel_id") or l.get("username", "")).lower()
+            for l in staged
+        }
+        for dl in db_leads:
+            key = (dl.get("channel_id") or dl.get("username", "")).lower()
+            if key and key not in staged_ids:
+                staged.append(dl)
+                staged_ids.add(key)
+
         print(f"[Node 6: Persist] Saving {len(staged)} YouTube leads to Supabase (platform='youtube')...")
         try:
-            save_leads_to_supabase_sync(leads=staged, campaign_id=campaign_id, niche=niche, platform="youtube")
+            # Only persist leads that came from fresh API discovery (not DB cache re-hits)
+            fresh_leads = [l for l in staged if not l.get("from_db")]
+            if fresh_leads:
+                save_leads_to_supabase_sync(leads=fresh_leads, campaign_id=campaign_id, niche=niche, platform="youtube")
+            # For DB leads we just need to re-link them to this campaign
+            db_only = [l for l in staged if l.get("from_db")]
+            if db_only and campaign_id:
+                save_leads_to_supabase_sync(leads=db_only, campaign_id=campaign_id, niche=niche, platform="youtube")
         except Exception as e:
             print(f"[-] Error in YouTube lead persistence: {e}")
-            return {"error": str(e)}
+            return {"error": str(e), "staged_leads": staged}
 
         return {"staged_leads": staged}

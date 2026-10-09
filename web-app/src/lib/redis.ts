@@ -149,3 +149,55 @@ export async function acquireUserJobLock(userId: string, ttlSeconds: number = 30
 export async function releaseUserJobLock(userId: string): Promise<void> {
   await redisCommand('Redis DEL job lock', (redis) => redis.del(`user:job_lock:${userId}`));
 }
+
+// ---------------------------------------------------------------------------
+// Platform API Quota State  (youtube, producthunt)
+// ---------------------------------------------------------------------------
+
+export type PlatformQuotaStatus =
+  | 'AVAILABLE'
+  | 'EXHAUSTED'      // daily quota gone, resets tomorrow (YouTube: midnight Pacific)
+  | 'RATE_LIMITED';  // temporary 429, short retry window
+
+export interface PlatformQuota {
+  platform: 'youtube' | 'producthunt';
+  status: PlatformQuotaStatus;
+  /** Unix timestamp (ms) when quota is expected to reset, null if unknown */
+  resetAt: number | null;
+  message?: string;
+  /** Whether the platform is currently usable */
+  available: boolean;
+}
+
+function platformQuotaKey(platform: string) {
+  return `api_quota:${platform}`;
+}
+
+export async function getPlatformQuota(
+  platform: 'youtube' | 'producthunt'
+): Promise<PlatformQuota> {
+  const defaultVal: PlatformQuota = { platform, status: 'AVAILABLE', resetAt: null, available: true };
+  try {
+    const data = await redisCommand(`Redis GET ${platformQuotaKey(platform)}`, (redis) =>
+      redis.get(platformQuotaKey(platform))
+    );
+    if (!data) return defaultVal;
+    const parsed: PlatformQuota = JSON.parse(data);
+    // Auto-clear if reset time has passed
+    if (parsed.resetAt && Date.now() >= parsed.resetAt) {
+      return { ...defaultVal };
+    }
+    return { ...parsed, available: parsed.status === 'AVAILABLE' };
+  } catch {
+    return defaultVal;
+  }
+}
+
+export async function getAllPlatformQuotas(): Promise<Record<string, PlatformQuota>> {
+  const [youtube, producthunt] = await Promise.all([
+    getPlatformQuota('youtube'),
+    getPlatformQuota('producthunt'),
+  ]);
+  return { youtube, producthunt };
+}
+

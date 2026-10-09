@@ -80,34 +80,40 @@ async def search_existing_leads_db(icp: Dict[str, Any], target_handles: Optional
         if remaining_slots > 0:
             icp_text = build_icp_text_summary(icp)
             icp_vec = generate_embedding(icp_text)
-            vec_str = "[" + ",".join(map(str, icp_vec)) + "]"
-            
-            vector_query = """
-            SELECT handle, follower_count, profile, (embedding <=> $1::vector) AS distance
-            FROM leads
-            WHERE platform = $2 AND embedding IS NOT NULL
-            ORDER BY embedding <=> $1::vector ASC
-            LIMIT $3;
-            """
-            
-            raw_vec_results = await db.query_raw(vector_query, vec_str, platform, remaining_slots * 2)
-            
-            for item in raw_vec_results:
-                handle = item.get("handle")
-                distance = item.get("distance", 1.0)
-                # Distance threshold for similarity (e.g. < 0.85)
-                if handle and handle.lower() not in seen_handles and distance < 0.85:
-                    seen_handles.add(handle.lower())
-                    profile_data = item.get("profile") or {}
-                    matched_leads.append({
-                        "username": handle,
-                        "creator_info": profile_data.get("creator_info", "Vector match from database"),
-                        "reasoning": f"Vector match for campaign ICP (similarity distance: {distance:.2f})",
-                        "posts": profile_data.get("posts", []),
-                        "followers": item.get("follower_count", 0),
-                        "found": True,
-                        "from_db": True
-                    })
+            if icp_vec is None:
+                print("[!] Skipping vector similarity search — embedding unavailable (HuggingFace credits exhausted?)")
+            else:
+                vec_str = "[" + ",".join(map(str, icp_vec)) + "]"
+
+                vector_query = """
+                SELECT handle, follower_count, profile, (embedding <=> $1::vector) AS distance
+                FROM leads
+                WHERE platform = $2 AND embedding IS NOT NULL
+                ORDER BY embedding <=> $1::vector ASC
+                LIMIT $3;
+                """
+
+                raw_vec_results = await db.query_raw(vector_query, vec_str, platform, remaining_slots * 2)
+
+                for item in raw_vec_results:
+                    handle = item.get("handle")
+                    distance = item.get("distance")
+                    # Guard against NULL distance (e.g. pgvector returns NULL for NULL embeddings)
+                    if distance is None:
+                        distance = 1.0
+                    # Distance threshold for similarity (e.g. < 0.85)
+                    if handle and handle.lower() not in seen_handles and distance < 0.85:
+                        seen_handles.add(handle.lower())
+                        profile_data = item.get("profile") or {}
+                        matched_leads.append({
+                            "username": handle,
+                            "creator_info": profile_data.get("creator_info", "Vector match from database"),
+                            "reasoning": f"Vector match for campaign ICP (similarity distance: {distance:.2f})",
+                            "posts": profile_data.get("posts", []),
+                            "followers": item.get("follower_count", 0),
+                            "found": True,
+                            "from_db": True
+                        })
                     if len(matched_leads) >= limit:
                         break
 
@@ -142,7 +148,7 @@ async def save_leads_to_supabase(leads: List[Dict[str, Any]], campaign_id: Optio
                 
             summary = build_lead_text_summary(lead)
             vec = generate_embedding(summary)
-            vec_str = "[" + ",".join(map(str, vec)) + "]"
+            vec_str = "[" + ",".join(map(str, vec)) + "]" if vec is not None else None
             
             followers = lead.get("followers") or lead.get("subscriber_count") or 0
             geo_country = lead.get("geo_country") or lead.get("country") or None
@@ -163,7 +169,7 @@ async def save_leads_to_supabase(leads: List[Dict[str, Any]], campaign_id: Optio
                 "summary": summary
             })
             
-            upsert_lead_query = """
+            upsert_lead_query_with_embedding = """
             INSERT INTO leads (id, platform, handle, follower_count, engagement_rate, profile, embedding, niche, geo_country, last_scraped_at, last_enriched_at)
             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6::vector, $7::text[], $8, NOW(), NOW())
             ON CONFLICT (platform, handle) DO UPDATE SET
@@ -179,9 +185,28 @@ async def save_leads_to_supabase(leads: List[Dict[str, Any]], campaign_id: Optio
                 last_enriched_at = NOW()
             RETURNING id;
             """
+
+            upsert_lead_query_no_embedding = """
+            INSERT INTO leads (id, platform, handle, follower_count, engagement_rate, profile, niche, geo_country, last_scraped_at, last_enriched_at)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6::text[], $7, NOW(), NOW())
+            ON CONFLICT (platform, handle) DO UPDATE SET
+                follower_count = EXCLUDED.follower_count,
+                engagement_rate = EXCLUDED.engagement_rate,
+                profile = EXCLUDED.profile,
+                niche = CASE
+                    WHEN leads.niche IS NULL OR array_length(leads.niche, 1) IS NULL THEN EXCLUDED.niche
+                    ELSE (SELECT array_agg(DISTINCT elem) FROM unnest(leads.niche || EXCLUDED.niche) AS elem)
+                END,
+                geo_country = COALESCE(EXCLUDED.geo_country, leads.geo_country),
+                last_enriched_at = NOW()
+            RETURNING id;
+            """
             
             engagement = lead.get("engagement_rate") or 0.0
-            res = await db.query_raw(upsert_lead_query, platform, username, followers, engagement, profile_json, vec_str, niche_tags, geo_country)
+            if vec_str is not None:
+                res = await db.query_raw(upsert_lead_query_with_embedding, platform, username, followers, engagement, profile_json, vec_str, niche_tags, geo_country)
+            else:
+                res = await db.query_raw(upsert_lead_query_no_embedding, platform, username, followers, engagement, profile_json, niche_tags, geo_country)
             lead_uuid = res[0]["id"] if res else None
             
             # Connect to campaign_leads if campaign_id is provided
@@ -310,37 +335,43 @@ async def search_existing_leads_by_niche(icp: Dict[str, Any], niche: str = "", l
                 icp_text = f"Niche: {niche}. {icp_text}"
             
             icp_vec = generate_embedding(icp_text)
-            vec_str = "[" + ",".join(map(str, icp_vec)) + "]"
+            if icp_vec is None:
+                print("[!] Skipping vector similarity search — embedding unavailable (HuggingFace credits exhausted?)")
+            else:
+                vec_str = "[" + ",".join(map(str, icp_vec)) + "]"
             
-            vector_query = f"""
-            SELECT handle, follower_count, profile, geo_country, (embedding <=> $1::vector) AS distance
-            FROM leads
-            WHERE platform = $2 
-              AND embedding IS NOT NULL
-              AND follower_count >= $3
-              {geo_clause}
-            ORDER BY embedding <=> $1::vector ASC
-            LIMIT $4;
-            """
+                vector_query = f"""
+                SELECT handle, follower_count, profile, geo_country, (embedding <=> $1::vector) AS distance
+                FROM leads
+                WHERE platform = $2 
+                  AND embedding IS NOT NULL
+                  AND follower_count >= $3
+                  {geo_clause}
+                ORDER BY embedding <=> $1::vector ASC
+                LIMIT $4;
+                """
             
-            raw_vec_results = await db.query_raw(vector_query, vec_str, platform, min_followers, remaining_slots * 2)
+                raw_vec_results = await db.query_raw(vector_query, vec_str, platform, min_followers, remaining_slots * 2)
             
-            for item in raw_vec_results:
-                handle = item.get("handle")
-                distance = item.get("distance", 1.0)
-                if handle and handle.lower() not in seen_handles and handle.lower() not in already_in_campaign and distance < 0.85:
-                    seen_handles.add(handle.lower())
-                    profile_data = item.get("profile") or {}
-                    matched_leads.append({
-                        "username": handle,
-                        "creator_info": profile_data.get("creator_info", "Vector match from database"),
-                        "reasoning": f"Vector match for ICP (distance: {distance:.2f}), {item.get('follower_count', 0)} followers",
-                        "posts": profile_data.get("posts", []),
-                        "followers": item.get("follower_count", 0),
-                        "geo_country": item.get("geo_country"),
-                        "found": True,
-                        "from_db": True
-                    })
+                for item in raw_vec_results:
+                    handle = item.get("handle")
+                    distance = item.get("distance")
+                    # Guard against NULL distance (e.g. pgvector returns NULL for NULL embeddings)
+                    if distance is None:
+                        distance = 1.0
+                    if handle and handle.lower() not in seen_handles and handle.lower() not in already_in_campaign and distance < 0.85:
+                        seen_handles.add(handle.lower())
+                        profile_data = item.get("profile") or {}
+                        matched_leads.append({
+                            "username": handle,
+                            "creator_info": profile_data.get("creator_info", "Vector match from database"),
+                            "reasoning": f"Vector match for ICP (distance: {distance:.2f}), {item.get('follower_count', 0)} followers",
+                            "posts": profile_data.get("posts", []),
+                            "followers": item.get("follower_count", 0),
+                            "geo_country": item.get("geo_country"),
+                            "found": True,
+                            "from_db": True
+                        })
                     if len(matched_leads) >= limit:
                         break
         
@@ -381,7 +412,7 @@ async def save_profiles_to_catalogue(profiles: List[Dict[str, Any]], niche: str 
             # Build profile summary for embedding
             summary = build_lead_text_summary(profile)
             vec = generate_embedding(summary)
-            vec_str = "[" + ",".join(map(str, vec)) + "]"
+            vec_str = "[" + ",".join(map(str, vec)) + "]" if vec is not None else None
             
             followers = profile.get("followers") or 0
             bio = profile.get("bio", "")
@@ -394,7 +425,7 @@ async def save_profiles_to_catalogue(profiles: List[Dict[str, Any]], niche: str 
                 "summary": summary
             })
             
-            upsert_query = """
+            upsert_query_with_embedding = """
             INSERT INTO leads (id, platform, handle, follower_count, profile, embedding, niche, geo_country, last_scraped_at, last_enriched_at)
             VALUES (gen_random_uuid(), 'instagram', $1, $2, $3::jsonb, $4::vector, $5::text[], $6, NOW(), NOW())
             ON CONFLICT (platform, handle) DO UPDATE SET
@@ -415,8 +446,29 @@ async def save_profiles_to_catalogue(profiles: List[Dict[str, Any]], niche: str 
                 last_scraped_at = NOW(),
                 last_enriched_at = NOW();
             """
+
+            upsert_query_no_embedding = """
+            INSERT INTO leads (id, platform, handle, follower_count, profile, niche, geo_country, last_scraped_at, last_enriched_at)
+            VALUES (gen_random_uuid(), 'instagram', $1, $2, $3::jsonb, $4::text[], $5, NOW(), NOW())
+            ON CONFLICT (platform, handle) DO UPDATE SET
+                follower_count = GREATEST(leads.follower_count, EXCLUDED.follower_count),
+                profile = CASE 
+                    WHEN leads.last_enriched_at IS NULL THEN EXCLUDED.profile
+                    ELSE leads.profile
+                END,
+                niche = CASE
+                    WHEN leads.niche IS NULL OR array_length(leads.niche, 1) IS NULL THEN EXCLUDED.niche
+                    ELSE (SELECT array_agg(DISTINCT elem) FROM unnest(leads.niche || EXCLUDED.niche) AS elem)
+                END,
+                geo_country = COALESCE(EXCLUDED.geo_country, leads.geo_country),
+                last_scraped_at = NOW(),
+                last_enriched_at = NOW();
+            """
             
-            await db.execute_raw(upsert_query, username, followers, profile_json, vec_str, niche_tags, geo_country)
+            if vec_str is not None:
+                await db.execute_raw(upsert_query_with_embedding, username, followers, profile_json, vec_str, niche_tags, geo_country)
+            else:
+                await db.execute_raw(upsert_query_no_embedding, username, followers, profile_json, niche_tags, geo_country)
             saved_count += 1
         
         await db.disconnect()

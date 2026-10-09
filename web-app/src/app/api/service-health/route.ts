@@ -3,6 +3,7 @@ import {
   redisCommand,
   getGroqStatus,
   enrichGroqStatus,
+  getAllPlatformQuotas,
 } from "@/lib/redis";
 
 const HEARTBEAT_KEY = "service_health:ml_service";
@@ -48,12 +49,23 @@ export async function GET() {
     );
   }
 
+  let platformQuotas = {};
+  try {
+    platformQuotas = await getAllPlatformQuotas();
+  } catch (error) {
+    console.error(
+      "Failed to query platform quotas:",
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    );
+  }
+
   return NextResponse.json({
     status: mlServiceActive ? "healthy" : "degraded",
     mlServiceActive,
     lastHeartbeat,
     timeSinceLastHeartbeatMs: lastHeartbeat ? now - lastHeartbeat : null,
     groqStatus,
+    platformQuotas,
     source,
     timestamp: now,
   });

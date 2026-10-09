@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 # --- Add parent path to import utils ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from utils.lead_db import save_leads_to_supabase_sync, search_existing_leads_by_niche_sync
+from utils.platform_quota import set_platform_quota_exhausted, set_platform_quota_rate_limited
 
 load_dotenv()
 
@@ -144,8 +145,25 @@ class ProductHuntClient:
                     json={"query": query, "variables": variables},
                     headers=self.headers
                 )
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("retry-after", 600))
+                    print(f"[-] ProductHunt API rate-limited (429). Retry after {retry_after}s.")
+                    set_platform_quota_rate_limited("producthunt", retry_after_seconds=retry_after)
+                    return {}
+                if response.status_code in (401, 403):
+                    print(f"[-] ProductHunt API auth/quota error ({response.status_code}).")
+                    set_platform_quota_exhausted("producthunt", message=f"ProductHunt API returned {response.status_code}.")
+                    return {}
                 response.raise_for_status()
                 return response.json()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response else 0
+            if status == 429:
+                set_platform_quota_rate_limited("producthunt")
+            elif status in (401, 403):
+                set_platform_quota_exhausted("producthunt", message=str(e))
+            print(f"[-] Error querying ProductHunt API: {e}")
+            return {}
         except Exception as e:
             print(f"[-] Error querying ProductHunt API: {e}")
             return {}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, AlertCircle } from "lucide-react";
+import { X, AlertCircle, AlertTriangle } from "lucide-react";
 import Stepper, { Step } from "./Stepper";
 import { useServiceHealth } from "./ServiceHealthProvider";
 
@@ -11,7 +11,7 @@ interface CreateCampaignModalProps {
 }
 
 export default function CreateCampaignModal({ isOpen, onClose, companyId }: CreateCampaignModalProps) {
-  const { isOffline } = useServiceHealth();
+  const { isOffline, platformQuotas } = useServiceHealth();
   const [formData, setFormData] = useState({
     campaignName: "",
     goalType: "Lead Generation",
@@ -131,6 +131,12 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                         code: data.code,
                         title: "Daily Free Limit Reached",
                         message: data.message || "To ensure high quality and prevent platform abuse, free tier users can launch 1 successful campaign per day. Please try again tomorrow!"
+                      });
+                    } else if (data.error === "PLATFORM_QUOTA_EXHAUSTED" || data.code === "PLATFORM_QUOTA_EXHAUSTED") {
+                      setApiError({
+                        code: "PLATFORM_QUOTA_EXHAUSTED",
+                        title: "Platform API Quota Exhausted",
+                        message: data.message || "The selected platforms have hit their daily API limits. Please deselect them or try again later."
                       });
                     } else if (data.code === "SERVER_BUSY" || res.status === 503) {
                       setApiError({
@@ -338,24 +344,58 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-6 pt-2">
                     <div className="flex flex-col gap-2 col-span-full">
                        <label className="text-[10px] font-bold text-[#555555] uppercase tracking-wider">Target Platforms (Restricts Agents &amp; UI Tabs) *</label>
+
+                       {/* Quota exhausted banner — shown when any platform is blocked */}
+                       {(["youtube", "producthunt"] as const).some(
+                         p => platformQuotas[p] && !platformQuotas[p].available
+                       ) && (
+                         <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-amber-300">
+                           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
+                           <p className="text-[11px] leading-relaxed">
+                             One or more platforms have hit their daily API quota and are temporarily unavailable.
+                             They will auto-reset — usually at midnight Pacific (YouTube) or when rate limits lift.
+                           </p>
+                         </div>
+                       )}
+
                        <div className="flex flex-col xs:flex-row gap-2 sm:gap-3">
                          {[
                            { id: "youtube", label: "YouTube" },
                            { id: "instagram", label: "Instagram" },
                            { id: "producthunt", label: "ProductHunt" }
                          ].map(plat => {
-                           const isSelected = (formData.platforms || ["youtube", "instagram", "producthunt"]).includes(plat.id);
+                           const quota = platformQuotas[plat.id];
+                           const isQuotaExhausted = quota ? !quota.available : false;
+                           const isSelected = !isQuotaExhausted &&
+                             (formData.platforms || ["youtube", "instagram", "producthunt"]).includes(plat.id);
+
+                           // Compute a short reset hint for the tooltip/label
+                           const resetHint = isQuotaExhausted && quota?.resetAt
+                             ? `Resets ${new Date(quota.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                             : isQuotaExhausted
+                             ? "Quota exhausted"
+                             : null;
+
                            return (
-                             <label key={plat.id} className="flex-1 cursor-pointer">
+                             <label
+                               key={plat.id}
+                               className={`flex-1 ${isQuotaExhausted ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+                               title={resetHint ?? undefined}
+                             >
                                <input
                                  type="checkbox"
                                  className="peer hidden"
+                                 disabled={isQuotaExhausted}
                                  checked={isSelected}
                                  onChange={() => {
+                                   if (isQuotaExhausted) return;
                                    const current = formData.platforms || ["youtube", "instagram", "producthunt"];
                                    let next: string[];
                                    if (isSelected) {
-                                     if (current.length === 1) return;
+                                     if (current.filter(p => {
+                                       const q = platformQuotas[p];
+                                       return !q || q.available;
+                                     }).length === 1) return; // must keep at least one available platform
                                      next = current.filter(p => p !== plat.id);
                                    } else {
                                      next = [...current, plat.id];
@@ -363,15 +403,31 @@ export default function CreateCampaignModal({ isOpen, onClose, companyId }: Crea
                                    setFormData({ ...formData, platforms: next });
                                  }}
                                />
-                               <div className="w-full py-2 px-2 sm:py-4 sm:px-3 border border-[#2A2A2A] bg-[#1A1A1A] rounded-lg flex items-center justify-center gap-2.5 text-xs font-bold text-[#666] uppercase tracking-wider hover:border-[#444] peer-checked:border-[#BC66FF] peer-checked:text-[#BC66FF] peer-checked:bg-[#BC66FF]/10 transition-all">
-                                 <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all ${isSelected ? "bg-[#BC66FF] border-[#BC66FF]" : "border-[#444] bg-[#111]"}`}>
-                                   {isSelected && (
-                                     <svg className="w-2.5 h-2.5 text-black" viewBox="0 0 10 10" fill="none">
-                                       <path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                                     </svg>
+                               <div className={`w-full py-2 px-2 sm:py-4 sm:px-3 border rounded-lg flex flex-col items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-all
+                                 ${isQuotaExhausted
+                                   ? "border-amber-500/30 bg-amber-500/5 text-amber-600"
+                                   : "border-[#2A2A2A] bg-[#1A1A1A] text-[#666] hover:border-[#444] peer-checked:border-[#BC66FF] peer-checked:text-[#BC66FF] peer-checked:bg-[#BC66FF]/10"
+                                 }`}
+                               >
+                                 <span className="flex items-center gap-2">
+                                   {isQuotaExhausted ? (
+                                     <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                                   ) : (
+                                     <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all ${isSelected ? "bg-[#BC66FF] border-[#BC66FF]" : "border-[#444] bg-[#111]"}`}>
+                                       {isSelected && (
+                                         <svg className="w-2.5 h-2.5 text-black" viewBox="0 0 10 10" fill="none">
+                                           <path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                                         </svg>
+                                       )}
+                                     </span>
                                    )}
+                                   {plat.label}
                                  </span>
-                                 {plat.label}
+                                 {isQuotaExhausted && (
+                                   <span className="text-[9px] font-semibold text-amber-500/80 normal-case tracking-normal">
+                                     {resetHint ?? "Unavailable"}
+                                   </span>
+                                 )}
                                </div>
                              </label>
                            );

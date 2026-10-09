@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enqueue } from "@/lib/queue";
-import { acquireUserJobLock, releaseUserJobLock } from "@/lib/redis";
+import { acquireUserJobLock, releaseUserJobLock, getPlatformQuota } from "@/lib/redis";
 import { v4 as uuidv4 } from "uuid";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -40,6 +40,38 @@ export async function POST(req: NextRequest) {
 
     if (!campaignName || !industry || !geoTarget || !targetProfile) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+
+    // --- 0. PLATFORM QUOTA GUARD ---
+    // Check each selected platform that has a trackable quota.
+    // If ALL selected platforms with quota tracking are exhausted, block the job.
+    const quotaTrackedPlatforms = ["youtube", "producthunt"] as const;
+    const selectedTracked = selectedPlatforms.filter((p: string) =>
+      (quotaTrackedPlatforms as readonly string[]).includes(p)
+    );
+    if (selectedTracked.length > 0) {
+      const quotaChecks = await Promise.all(
+        selectedTracked.map((p: string) =>
+          getPlatformQuota(p as "youtube" | "producthunt")
+        )
+      );
+      const allExhausted = quotaChecks.every(q => !q.available);
+      if (allExhausted) {
+        const soonestReset = quotaChecks
+          .map(q => q.resetAt)
+          .filter((r): r is number => r !== null)
+          .sort()[0];
+        const resetLabel = soonestReset
+          ? new Date(soonestReset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : "later today";
+        return NextResponse.json(
+          {
+            error: "PLATFORM_QUOTA_EXHAUSTED",
+            message: `All selected platforms (${selectedTracked.join(", ")}) have hit their daily API quota. They reset around ${resetLabel}. Please try again then, or add Instagram to your selection.`,
+          },
+          { status: 429 }
+        );
+      }
     }
 
     // --- 1. TIER-BASED EXECUTION & DAILY LIMIT CHECK ---
