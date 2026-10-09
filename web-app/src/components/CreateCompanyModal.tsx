@@ -62,7 +62,7 @@ export default function CreateCompanyModal({ isOpen, onClose }: CreateCompanyMod
                 const isInvalidContent = job.progress.message === "Content Invalidated";
                 setFailureMessage(
                   isInvalidContent
-                    ? "Please be more detailed — Pulsar couldn't identify this as a real company. Try adding a clearer description, full website URL, or more specific business information."
+                    ? "Please be more detailed — Try adding a clearer description, full website URL, or more specific business information."
                     : (job.progress.message || "Job failed. Please try again.")
                 );
                 setLoading(false);

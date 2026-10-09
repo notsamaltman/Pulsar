@@ -88,8 +88,7 @@ async def generate_summary(state: CompanyState):
     
     Instructions:
     1. Provide a professional summary (2-3 sentences) of what this business does, their core services, and their target audience.
-    2. CRITICAL: If the provided information (name, url, or content) does not appear to belong to a legitimate company, agency, organization, or business (e.g., it looks like random text, gibberish, personal blog irrelevant to business, or placeholder text), you MUST return EXACTLY the string 'INVALID_CONTENT'.
-    3. Do not include any preamble or self-references. Just return the summary or 'INVALID_CONTENT'.
+    2. Do not include any preamble or self-references. Just return the summary or 'INVALID_CONTENT' if the given content is very surely just gibberish.
     """
     
     await state.job.updateProgress({"status": "summarizing", "message": "Analyzing Content..."})
