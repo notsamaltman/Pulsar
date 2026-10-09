@@ -2,8 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /ml-service
 
-# Install system dependencies needed by Playwright (Chromium) and Prisma/Node
-RUN apt-get update && apt-get install -y \
+# ── System deps ────────────────────────────────────────────────────────────
+# Playwright (Chromium) needs these at runtime.
+# All installed in one layer to keep the image lean.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libatomic1 \
     libnss3 \
     libatk1.0-0 \
@@ -21,22 +23,27 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Python deps ────────────────────────────────────────────────────────────
+# Copy only requirements first so this layer is cached as long as
+# requirements.txt doesn't change — the most expensive layer.
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir -r requirements.txt
+# ── Playwright browser binaries ────────────────────────────────────────────
+# Must run AFTER pip install (playwright CLI comes from the package).
+RUN playwright install chromium --with-deps
 
-# Pre-download the local embedding model so it's baked into the image
-# (used as fallback when HuggingFace Inference API quota is exhausted)
-# Must match EMBEDDING_MODEL in utils/huggingface_embeddings.py
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+# ── Pre-download fastembed ONNX model ─────────────────────────────────────
+# Bakes the local fallback embedding model into the image so the container
+# never needs internet access for the fallback path.
+# fastembed caches to ~/.cache/fastembed by default.
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 
-# Download Playwright browser binaries (Chromium headless shell)
-RUN playwright install chromium
-
+# ── Application code ───────────────────────────────────────────────────────
+# Copied LAST so code changes don't bust the expensive layers above.
 COPY . .
 RUN prisma generate
-# Generates the Prisma client layer inside the image using the new config system
 
 EXPOSE 8000
-
 CMD ["python", "main.py"]
