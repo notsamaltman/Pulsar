@@ -76,7 +76,7 @@ export function ServiceHealthProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     checkHealth();
-    const interval = setInterval(checkHealth, 10000);
+    const interval = setInterval(checkHealth, 60000); // poll every 60s — 10s was hammering Workers CPU
     return () => clearInterval(interval);
   }, []);
 

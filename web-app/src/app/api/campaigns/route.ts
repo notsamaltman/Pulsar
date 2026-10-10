@@ -3,7 +3,7 @@ import { Queue } from "bullmq";
 import { getPrisma } from "@/lib/prisma";
 import { createRedisClient, getGroqStatusWith, isGroqExhausted, withTimeout } from "@/lib/redis";
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   const { prisma } = getPrisma();
