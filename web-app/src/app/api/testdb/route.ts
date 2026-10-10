@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const start = Date.now();
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
 
   try {
     const result = await prisma.user.findFirst({
@@ -28,7 +28,5 @@ export async function GET() {
       },
       { status: 500 }
     );
-  } finally {
-    await pool.end();
   }
 }

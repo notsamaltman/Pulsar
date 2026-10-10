@@ -1,5 +1,6 @@
 // lib/queue.ts
 import { Queue } from 'bullmq';
+import IORedis from 'ioredis';
 import { createRedisClient, withTimeout } from './redis';
 
 export interface Job {
@@ -20,18 +21,26 @@ async function safeCloseQueue(q: Queue) {
 }
 
 /**
- * Enqueues a job. Runs the capacity check and the add on a single Redis connection
- * to avoid the cost of opening two separate TCP connections per request.
+ * Enqueues a job. Runs the capacity check and the add on a single Redis connection.
+ *
+ * Pass `existingConnection` to reuse an already-connected IORedis client from the
+ * calling request handler (saves one TCP handshake). When omitted, a new connection
+ * is created and torn down internally as before.
  */
-export async function enqueue(job: Job) {
+export async function enqueue(job: Job, existingConnection?: IORedis) {
   const { jobId, jobType, jobBody, priority = 5 } = job;
   const maxCapacity = parseInt(process.env.PULSAR_MAX_QUEUE_SIZE || '500', 10);
 
-  const connection = createRedisClient();
-  try {
-    await withTimeout(connection.connect(), 4000, 'Redis connect');
+  // Use the caller's connection if provided, otherwise open our own.
+  const ownsConnection = !existingConnection;
+  const connection = existingConnection ?? createRedisClient();
 
-    // --- Capacity check (reuses same connection) ---
+  try {
+    if (ownsConnection) {
+      await withTimeout(connection.connect(), 4000, 'Redis connect');
+    }
+
+    // --- Capacity check ---
     let currentCount = 0;
     for (const qName of KNOWN_QUEUES) {
       const q = new Queue(qName, { connection });
@@ -56,7 +65,7 @@ export async function enqueue(job: Job) {
       throw error;
     }
 
-    // --- Enqueue (reuses same connection) ---
+    // --- Enqueue ---
     const queueName = `${jobType}-queue`;
     const requestQueue = new Queue(queueName, { connection });
     try {
@@ -86,19 +95,26 @@ export async function enqueue(job: Job) {
       await safeCloseQueue(requestQueue);
     }
   } finally {
-    connection.disconnect();
+    if (ownsConnection) {
+      connection.disconnect();
+    }
   }
 }
 
 /**
  * Checks total number of jobs currently admitted-but-not-completed across queues.
  * Counts waiting, active, and delayed jobs without loading full job objects.
- * NOTE: Opens its own connection — only call this from endpoints that don't also enqueue.
+ *
+ * Pass `existingConnection` to reuse an already-connected IORedis client.
+ * When omitted, opens and closes its own connection.
  */
-export async function getQueueTotalJobs(): Promise<number> {
-  const connection = createRedisClient();
+export async function getQueueTotalJobs(existingConnection?: IORedis): Promise<number> {
+  const ownsConnection = !existingConnection;
+  const connection = existingConnection ?? createRedisClient();
   try {
-    await withTimeout(connection.connect(), 4000, 'Redis connect');
+    if (ownsConnection) {
+      await withTimeout(connection.connect(), 4000, 'Redis connect');
+    }
     let total = 0;
     for (const qName of KNOWN_QUEUES) {
       const q = new Queue(qName, { connection });
@@ -117,7 +133,9 @@ export async function getQueueTotalJobs(): Promise<number> {
     }
     return total;
   } finally {
-    connection.disconnect();
+    if (ownsConnection) {
+      connection.disconnect();
+    }
   }
 }
 

@@ -7,7 +7,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
   try {
     const { id } = await params;
 
@@ -35,7 +35,5 @@ export async function DELETE(
       { error: "Failed to delete company" },
       { status: 500 }
     );
-  } finally {
-    await pool.end();
   }
 }

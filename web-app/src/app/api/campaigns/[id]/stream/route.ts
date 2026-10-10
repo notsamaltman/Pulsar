@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
 
   const encoder = new TextEncoder();
 
@@ -48,7 +48,6 @@ export async function GET(
 
       const cleanupAll = async () => {
         await cleanupRedis();
-        try { await pool.end(); } catch {}
       };
 
       const sendEvent = (data: any) => {

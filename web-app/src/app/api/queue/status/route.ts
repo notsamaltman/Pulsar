@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Queue } from 'bullmq';
-import { createRedisClient, getGroqStatus, enrichGroqStatus, withTimeout } from '@/lib/redis';
+import { createRedisClient, getGroqStatusWith, enrichGroqStatus, withTimeout } from '@/lib/redis';
 import { getQueueTotalJobs } from '@/lib/queue';
 
 export async function GET(req: NextRequest) {
@@ -15,8 +15,9 @@ export async function GET(req: NextRequest) {
 
     const totalWaiting = await withTimeout(masterQueue.getWaitingCount(), 4000, 'BullMQ getWaitingCount');
     const totalActive = await withTimeout(masterQueue.getActiveCount(), 4000, 'BullMQ getActiveCount');
-    const totalQueueSize = await getQueueTotalJobs();
-    const groqStatus = enrichGroqStatus(await getGroqStatus());
+    // Pass the existing connection — avoids a second TCP handshake
+    const totalQueueSize = await getQueueTotalJobs(connection);
+    const groqStatus = enrichGroqStatus(await getGroqStatusWith(connection));
 
     let jobDetail = null;
 

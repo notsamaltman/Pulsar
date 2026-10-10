@@ -10,7 +10,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
   try {
     const { id } = await params;
 
@@ -33,7 +33,7 @@ export async function GET(
       }
     });
 
-    // 2. Fetch job status from BullMQ master-queue if running
+    // 2. Fetch job status from BullMQ — BullMQ Queue must own its connection.
     let jobProgress: any = null;
     let jobState: string = "completed";
 
@@ -86,8 +86,6 @@ export async function GET(
     );
     const errorMessage = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: errorMessage }, { status: 500 });
-  } finally {
-    await pool.end();
   }
 }
 
@@ -95,7 +93,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
   try {
     const { id } = await params;
 
@@ -117,12 +115,10 @@ export async function DELETE(
     }
 
     // Delete campaign from database
-    // FK relationship onDelete: Cascade on CampaignLead deletes junction records while preserving Lead table rows!
-    await prisma.campaign.delete({
-      where: { id }
-    });
+    // FK relationship onDelete: Cascade on CampaignLead deletes junction records while preserving Lead table rows
+    await prisma.campaign.delete({ where: { id } });
 
-    // Also attempt to remove job from BullMQ queue if present
+    // Also attempt to remove job from BullMQ queue if present — BullMQ owns its connection.
     const connection = createRedisClient();
     try {
       await withTimeout(connection.connect(), 4000, "Redis connect");
@@ -156,7 +152,5 @@ export async function DELETE(
     );
     const errorMessage = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: errorMessage }, { status: 500 });
-  } finally {
-    await pool.end();
   }
 }

@@ -49,14 +49,14 @@ async function syncProfileImage(userId: string, currentImage: string | null | un
       const s3Url = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${filename}`;
       console.log(`Successfully synced image for user ${userId} to ${s3Url}`);
 
-      const { prisma, pool } = getPrisma();
+      const { prisma } = getPrisma();
       try {
         await prisma.user.update({
           where: { id: userId },
           data: { image: s3Url },
         });
-      } finally {
-        await pool.end();
+      } catch (updateErr) {
+        console.warn("Failed to update user image in DB:", updateErr instanceof Error ? updateErr.message : String(updateErr));
       }
       return s3Url;
     } catch (error) {
@@ -105,7 +105,7 @@ export const authOptions: NextAuthOptions = {
         // Also resolve the canonical DB user id: if a row already exists
         // with this email but a different id (re-auth / id mismatch), adopt
         // the canonical id so session.user.id always matches campaigns.userId.
-        const { prisma, pool } = getPrisma();
+        const { prisma } = getPrisma();
         try {
           const dbUser = await withTimeout(
             prisma.user.findUnique({
@@ -164,8 +164,6 @@ export const authOptions: NextAuthOptions = {
             dbError instanceof Error ? `${dbError.name}: ${dbError.message}` : String(dbError)
           );
           token.id = user.id;
-        } finally {
-          await pool.end();
         }
 
         // Profile image sync — only on first sign-in

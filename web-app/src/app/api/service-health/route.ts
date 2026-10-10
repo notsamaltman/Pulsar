@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import {
-  redisCommand,
-  getGroqStatus,
+  getRedisClient,
+  redisCommandOn,
+  getGroqStatusWith,
+  getAllPlatformQuotasWith,
   enrichGroqStatus,
-  getAllPlatformQuotas,
 } from "@/lib/redis";
 
 const HEARTBEAT_KEY = "service_health:ml_service";
@@ -15,56 +16,66 @@ let inMemoryLastHeartbeat: number | null = null;
 export async function GET() {
   let lastHeartbeat: number | null = null;
   let source = "memory";
+  let groqStatus = { status: "AVAILABLE" as const, resetAt: null };
+  let platformQuotas = {};
 
   try {
-    const redisVal = await redisCommand("Redis GET service health", (redis) =>
-      redis.get(HEARTBEAT_KEY)
-    );
-    if (redisVal) {
-      lastHeartbeat = parseInt(String(redisVal), 10);
-      source = "redis";
+    // Reuses the cached connection — no TCP handshake on warm requests.
+    const redis = await getRedisClient();
+
+    try {
+      const redisVal = await redisCommandOn(redis, "Redis GET service health", (r) =>
+        r.get(HEARTBEAT_KEY)
+      );
+      if (redisVal) {
+        lastHeartbeat = parseInt(String(redisVal), 10);
+        source = "redis";
+      }
+    } catch (error) {
+      console.error(
+        "Failed to query Redis for service health:",
+        error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      );
     }
-  } catch (error) {
+
+    try {
+      groqStatus = await getGroqStatusWith(redis) as typeof groqStatus;
+    } catch (error) {
+      console.error(
+        "Failed to query Groq status:",
+        error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      );
+    }
+
+    try {
+      platformQuotas = await getAllPlatformQuotasWith(redis);
+    } catch (error) {
+      console.error(
+        "Failed to query platform quotas:",
+        error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      );
+    }
+  } catch (connectErr) {
     console.error(
-      "Failed to query Redis for service health:",
-      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      "Redis unavailable for service health GET:",
+      connectErr instanceof Error ? `${connectErr.name}: ${connectErr.message}` : String(connectErr)
     );
   }
 
-  // Fallback to in-memory if Redis had no value or threw error
   if (!lastHeartbeat && inMemoryLastHeartbeat) {
     lastHeartbeat = inMemoryLastHeartbeat;
   }
 
   const now = Date.now();
   const mlServiceActive = lastHeartbeat !== null && (now - lastHeartbeat) < HEARTBEAT_TIMEOUT_MS;
-
-  let groqStatus = enrichGroqStatus({ status: "AVAILABLE", resetAt: null });
-  try {
-    groqStatus = enrichGroqStatus(await getGroqStatus());
-  } catch (error) {
-    console.error(
-      "Failed to query Groq status:",
-      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-    );
-  }
-
-  let platformQuotas = {};
-  try {
-    platformQuotas = await getAllPlatformQuotas();
-  } catch (error) {
-    console.error(
-      "Failed to query platform quotas:",
-      error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-    );
-  }
+  const enriched = enrichGroqStatus(groqStatus);
 
   return NextResponse.json({
     status: mlServiceActive ? "healthy" : "degraded",
     mlServiceActive,
     lastHeartbeat,
     timeSinceLastHeartbeatMs: lastHeartbeat ? now - lastHeartbeat : null,
-    groqStatus,
+    groqStatus: enriched,
     platformQuotas,
     source,
     timestamp: now,
@@ -77,8 +88,9 @@ export async function POST() {
 
   let redisUpdated = false;
   try {
-    await redisCommand("Redis SET service health", (redis) =>
-      redis.set(HEARTBEAT_KEY, String(now), "EX", 45)
+    const redis = await getRedisClient();
+    await redisCommandOn(redis, "Redis SET service health", (r) =>
+      r.set(HEARTBEAT_KEY, String(now), "EX", 45)
     );
     redisUpdated = true;
   } catch (error) {
@@ -88,9 +100,5 @@ export async function POST() {
     );
   }
 
-  return NextResponse.json({
-    status: "ok",
-    receivedAt: now,
-    redisUpdated,
-  });
+  return NextResponse.json({ status: "ok", receivedAt: now, redisUpdated });
 }

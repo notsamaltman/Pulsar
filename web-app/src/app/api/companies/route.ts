@@ -4,7 +4,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
 export async function POST(req: NextRequest) {
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
   try {
     const session = await getServerSession(authOptions);
 
@@ -44,13 +44,11 @@ export async function POST(req: NextRequest) {
       { error: "Failed to create company" },
       { status: 500 }
     );
-  } finally {
-    await pool.end();
   }
 }
 
 export async function GET() {
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
   try {
     const session = await getServerSession(authOptions);
     // @ts-expect-error session.user is slightly typed differently in nextauth
@@ -70,7 +68,5 @@ export async function GET() {
       { error: "Failed to fetch companies" },
       { status: 500 }
     );
-  } finally {
-    await pool.end();
   }
 }

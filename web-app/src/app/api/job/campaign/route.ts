@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enqueue } from "@/lib/queue";
-import { acquireUserJobLock, releaseUserJobLock, getPlatformQuota } from "@/lib/redis";
+import {
+  getRedisClient,
+  acquireUserJobLockWith,
+  releaseUserJobLockWith,
+  getPlatformQuotaWith,
+} from "@/lib/redis";
 import { v4 as uuidv4 } from "uuid";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -8,7 +13,7 @@ import { getPrisma } from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
   let userId: string | null = null;
-  const { prisma, pool } = getPrisma();
+  const { prisma } = getPrisma();
   try {
     const session = await getServerSession(authOptions);
     userId = (session?.user as Record<string, any>)?.id || null;
@@ -42,9 +47,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // Cached Redis client — reuses the existing TCP connection for this isolate.
+    // All quota checks, lock, and enqueue share this one connection.
+    const redis = await getRedisClient();
+
     // --- 0. PLATFORM QUOTA GUARD ---
-    // Check each selected platform that has a trackable quota.
-    // If ALL selected platforms with quota tracking are exhausted, block the job.
     const quotaTrackedPlatforms = ["youtube", "producthunt"] as const;
     const selectedTracked = selectedPlatforms.filter((p: string) =>
       (quotaTrackedPlatforms as readonly string[]).includes(p)
@@ -52,7 +59,7 @@ export async function POST(req: NextRequest) {
     if (selectedTracked.length > 0) {
       const quotaChecks = await Promise.all(
         selectedTracked.map((p: string) =>
-          getPlatformQuota(p as "youtube" | "producthunt")
+          getPlatformQuotaWith(redis, p as "youtube" | "producthunt")
         )
       );
       const allExhausted = quotaChecks.every(q => !q.available);
@@ -111,7 +118,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const locked = await acquireUserJobLock(userId, 30);
+      const locked = await acquireUserJobLockWith(redis, userId, 30);
       if (!locked) {
         return NextResponse.json(
           {
@@ -126,21 +133,11 @@ export async function POST(req: NextRequest) {
     const jobId = uuidv4();
 
     // --- 2. ENSURE USER ROW EXISTS (FK guard) ---
-    // NextAuth runs in pure JWT mode with no DB adapter, so it never auto-creates
-    // a row in the `users` table. The `campaigns.userId` column has a FK pointing
-    // at `users.id`, so we must upsert the user before inserting the campaign.
-    // The `Company` model has no such FK (bare String? field), which is why company
-    // creation never hit this error.
     if (userId) {
       const sessionUser = session?.user as Record<string, any>;
       const sessionEmail: string | null = sessionUser?.email ?? null;
 
       try {
-        // Guard against duplicate-email conflicts: if a row already exists with
-        // this email but a different id (e.g. re-authed with new OAuth subject),
-        // adopt the canonical row's id so the FK is valid.
-        // Note: the JWT callback now also resolves this at sign-in, so this
-        // should rarely trigger — it's a safety net for existing mismatched rows.
         if (sessionEmail) {
           const existing = await prisma.user.findUnique({
             where: { email: sessionEmail },
@@ -156,7 +153,7 @@ export async function POST(req: NextRequest) {
 
         await prisma.user.upsert({
           where: { id: userId },
-          update: {},  // row exists — nothing to change
+          update: {},
           create: {
             id: userId,
             name: sessionUser?.name ?? null,
@@ -165,7 +162,6 @@ export async function POST(req: NextRequest) {
           },
         });
       } catch (userErr) {
-        // Non-fatal: log and fall back to no userId so the campaign still saves.
         console.error(
           "[-] User upsert warning (falling back to null userId):",
           userErr instanceof Error ? userErr.message : String(userErr)
@@ -201,7 +197,7 @@ export async function POST(req: NextRequest) {
     });
     console.log(`[+] Saved Campaign '${campaignName}' (${jobId}) to Prisma database.`);
 
-    // --- 4. ENQUEUE ---
+    // --- 4. ENQUEUE (reuses the cached Redis connection) ---
     const job = {
       jobId,
       jobType: "master",
@@ -214,7 +210,7 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    const addedJob = await enqueue(job);
+    const addedJob = await enqueue(job, redis);
 
     return NextResponse.json({
       success: true,
@@ -224,7 +220,11 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: unknown) {
     if (userId) {
-      await releaseUserJobLock(userId).catch(() => {});
+      // Best-effort lock release using the cached client — ignore errors.
+      try {
+        const redis = await getRedisClient();
+        await releaseUserJobLockWith(redis, userId);
+      } catch {}
     }
     console.error(
       "Error enqueuing campaign build job:",
@@ -247,7 +247,5 @@ export async function POST(req: NextRequest) {
       { error: "Failed to enqueue job", details: errorMessage },
       { status: 500 }
     );
-  } finally {
-    await pool.end();
   }
 }
