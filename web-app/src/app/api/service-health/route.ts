@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  getRedisClient,
+  RequestRedisClient,
   redisCommandOn,
   getGroqStatusWith,
   getAllPlatformQuotasWith,
@@ -19,9 +19,9 @@ export async function GET() {
   let groqStatus = { status: "AVAILABLE" as const, resetAt: null };
   let platformQuotas = {};
 
+  const rrc = new RequestRedisClient();
   try {
-    // Reuses the cached connection — no TCP handshake on warm requests.
-    const redis = await getRedisClient();
+    const redis = await rrc.get();
 
     try {
       const redisVal = await redisCommandOn(redis, "Redis GET service health", (r) =>
@@ -60,6 +60,8 @@ export async function GET() {
       "Redis unavailable for service health GET:",
       connectErr instanceof Error ? `${connectErr.name}: ${connectErr.message}` : String(connectErr)
     );
+  } finally {
+    await rrc.close();
   }
 
   if (!lastHeartbeat && inMemoryLastHeartbeat) {
@@ -87,8 +89,9 @@ export async function POST() {
   inMemoryLastHeartbeat = now;
 
   let redisUpdated = false;
+  const rrc = new RequestRedisClient();
   try {
-    const redis = await getRedisClient();
+    const redis = await rrc.get();
     await redisCommandOn(redis, "Redis SET service health", (r) =>
       r.set(HEARTBEAT_KEY, String(now), "EX", 45)
     );
@@ -98,6 +101,8 @@ export async function POST() {
       "Failed to update Redis service health heartbeat:",
       error instanceof Error ? `${error.name}: ${error.message}` : String(error)
     );
+  } finally {
+    await rrc.close();
   }
 
   return NextResponse.json({ status: "ok", receivedAt: now, redisUpdated });

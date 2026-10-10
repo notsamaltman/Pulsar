@@ -66,73 +66,79 @@ export function createRedisClient(): IORedis {
 }
 
 // ---------------------------------------------------------------------------
-// getRedisClient — module-level cached client (one per isolate).
+// RequestRedisClient — a connected client scoped to a single request.
 //
-// Cloudflare Workers isolates can serve multiple requests without re-init.
-// We keep one connected IORedis instance per isolate so warm requests pay
-// zero TCP handshake cost to Redis.
+// The module-level cache approach doesn't work reliably against a self-hosted
+// Redis server that closes idle TCP connections — IORedis can report status
+// 'ready' while the socket is already dead, causing "Stream isn't writeable"
+// errors on the next command.
 //
-// The client auto-invalidates on 'error' / 'close' / 'end' so the next
-// getRedisClient() call creates a fresh connection transparently.
+// Instead we open one fresh connection per request, use it for ALL Redis
+// operations in that request (quota checks, lock, enqueue, etc.), then
+// disconnect in finally. This eliminates the stale-socket problem while still
+// keeping the per-request connection count at 1.
 //
-// DO NOT call disconnect() on the client returned by this function.
+// Usage:
+//   const rrc = new RequestRedisClient();
+//   try {
+//     const redis = await rrc.get();
+//     // use redis ...
+//   } finally {
+//     await rrc.close();
+//   }
 // ---------------------------------------------------------------------------
 
-let _cachedRedis: IORedis | null = null;
-let _connectPromise: Promise<void> | null = null;
+export class RequestRedisClient {
+  private client: IORedis | null = null;
+  private connectPromise: Promise<void> | null = null;
 
-function _buildCachedClient(): IORedis {
-  const client = createRedisClient();
-
-  const invalidate = () => {
-    if (_cachedRedis === client) {
-      _cachedRedis = null;
-      _connectPromise = null;
+  /** Returns a connected IORedis instance, connecting on first call. */
+  async get(): Promise<IORedis> {
+    if (!this.client) {
+      this.client = createRedisClient();
     }
-  };
+    if (!this.connectPromise) {
+      this.connectPromise = withTimeout(
+        this.client.connect(),
+        REDIS_CONNECT_TIMEOUT_MS,
+        'Redis connect'
+      ).catch((err) => {
+        this.client = null;
+        this.connectPromise = null;
+        throw err;
+      });
+    }
+    await this.connectPromise;
+    return this.client!;
+  }
 
-  client.on('error', (err) => {
-    console.error('[redis] cached client error — will reconnect on next request:', err?.message ?? err);
-    invalidate();
-  });
-  client.on('close', invalidate);
-  client.on('end', invalidate);
-
-  return client;
+  /** Disconnects the client. Safe to call even if get() was never called. */
+  async close(): Promise<void> {
+    if (this.client) {
+      try { this.client.disconnect(); } catch {}
+      this.client = null;
+      this.connectPromise = null;
+    }
+  }
 }
 
 /**
- * Returns a connected, module-level cached IORedis client for this isolate.
- * Safe to call at the top of any request handler — no disconnect() needed.
- * The connection is reused across all requests hitting the same isolate.
+ * Convenience wrapper: opens a fresh Redis connection, calls fn with it,
+ * then always disconnects. Use for routes that need a single scoped client.
+ *
+ * Example:
+ *   const result = await withRedis(async (redis) => {
+ *     return getGroqStatusWith(redis);
+ *   });
  */
-export async function getRedisClient(): Promise<IORedis> {
-  // Happy path: already connected in this isolate.
-  if (_cachedRedis && (_cachedRedis.status === 'ready' || _cachedRedis.status === 'connect')) {
-    return _cachedRedis;
+export async function withRedis<T>(fn: (redis: IORedis) => Promise<T>): Promise<T> {
+  const rrc = new RequestRedisClient();
+  try {
+    const redis = await rrc.get();
+    return await fn(redis);
+  } finally {
+    await rrc.close();
   }
-
-  // Allocate a fresh client if needed.
-  if (!_cachedRedis) {
-    _cachedRedis = _buildCachedClient();
-    _connectPromise = null;
-  }
-
-  // Guard against concurrent callers racing to connect.
-  if (!_connectPromise) {
-    _connectPromise = withTimeout(
-      _cachedRedis.connect(),
-      REDIS_CONNECT_TIMEOUT_MS,
-      'Redis cached connect'
-    ).catch((err) => {
-      _cachedRedis = null;
-      _connectPromise = null;
-      throw err;
-    });
-  }
-
-  await _connectPromise;
-  return _cachedRedis!;
 }
 
 // ---------------------------------------------------------------------------

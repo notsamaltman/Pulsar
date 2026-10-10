@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enqueue } from "@/lib/queue";
 import {
-  getRedisClient,
+  RequestRedisClient,
   acquireUserJobLockWith,
   releaseUserJobLockWith,
   getPlatformQuotaWith,
@@ -14,6 +14,7 @@ import { getPrisma } from "@/lib/prisma";
 export async function POST(req: NextRequest) {
   let userId: string | null = null;
   const { prisma } = getPrisma();
+  const rrc = new RequestRedisClient();
   try {
     const session = await getServerSession(authOptions);
     userId = (session?.user as Record<string, any>)?.id || null;
@@ -47,9 +48,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Cached Redis client — reuses the existing TCP connection for this isolate.
-    // All quota checks, lock, and enqueue share this one connection.
-    const redis = await getRedisClient();
+    // One Redis connection for the entire request — quota checks, lock, enqueue.
+    const redis = await rrc.get();
 
     // --- 0. PLATFORM QUOTA GUARD ---
     const quotaTrackedPlatforms = ["youtube", "producthunt"] as const;
@@ -220,9 +220,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: unknown) {
     if (userId) {
-      // Best-effort lock release using the cached client — ignore errors.
+      // Best-effort lock release — reuse the same connection if still alive.
       try {
-        const redis = await getRedisClient();
+        const redis = await rrc.get();
         await releaseUserJobLockWith(redis, userId);
       } catch {}
     }
@@ -247,5 +247,7 @@ export async function POST(req: NextRequest) {
       { error: "Failed to enqueue job", details: errorMessage },
       { status: 500 }
     );
+  } finally {
+    await rrc.close();
   }
 }
