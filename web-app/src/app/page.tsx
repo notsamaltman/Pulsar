@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { AnimatedSection, Beams, TextReveal, SpotlightCard, ContactAdminModal } from "@/components";
+import { AnimatedSection, SpotlightCard, ContactAdminModal } from "@/components";
 import { 
   TimerOff, 
   ShieldAlert,
@@ -16,6 +17,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
+
+// Heavy animation components — only loaded on the client, never SSR'd.
+// This keeps them out of the Workers SSR bundle entirely.
+const Beams = dynamic(() => import("@/components").then(m => ({ default: m.Beams })), { ssr: false });
+const TextReveal = dynamic(() => import("@/components").then(m => ({ default: m.TextReveal })), { ssr: false });
 
 export default function Home() {
   const { status } = useSession();

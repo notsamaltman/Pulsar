@@ -1,5 +1,9 @@
 "use client";
 
+// framer-motion is client-only. This file is marked "use client" so Next.js
+// will never SSR these components on Workers — the server renders plain HTML
+// fallbacks and framer-motion hydrates on the client.
+
 import { motion, HTMLMotionProps } from "framer-motion";
 export { motion };
 import { ReactNode } from "react";
