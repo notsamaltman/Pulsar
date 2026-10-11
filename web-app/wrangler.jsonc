@@ -17,7 +17,7 @@
     {
       "binding": "HYPERDRIVE",
       "id": "e603aecbb9e34094a190cdebca1b3c94",
-      "localConnectionString": "$CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE"
+      "localConnectionString": "postgresql://mockuser:mockpass@127.0.0.1:5432/mockdb"
     }
   ]
 }
